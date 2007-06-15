@@ -46,7 +46,12 @@ args:
 
 term:
 	[
-		[ x = LIDENT -> if x = "_" then Anon _loc else Atom (x,_loc)
+		[ x = LIDENT; t = OPT args ->
+			(match (x,t) with
+			| ("_",None) -> Anon _loc
+			| ("_",Some _) -> Loc.raise _loc (Failure "Anonymous with arguments")
+			| (x,None) -> Comp (x,[],_loc)
+			| (x,Some t) -> Comp (x,t,_loc))
 		| x = UIDENT -> Var (x,_loc) ]
 	];
 END

@@ -14,6 +14,10 @@ let string_init n f =
 	end
 ;;
 
+let rec fold_range f accu l u =
+	if l < u then let u = u - 1 in fold_range f (f accu u) l u else accu
+;;
+
 (** Open/closed versions **)
 
 type version = int * int ;;
@@ -53,7 +57,7 @@ let version_neg (i,k) =
 
 (** Name functions **)
 
-let atom_name n = String.capitalize n ;;
+let comp_name n = String.capitalize n ;;
 
 let pred_name n v = n ^ "_" ^ (version_string v) ;;
 
@@ -63,27 +67,36 @@ let f_name = "_f" ;;
 
 (** Atom translation **)
 
-let atoms_type _loc atoms =
-	let wrap = StringSet.fold (fun atom l ->
-		<:ctyp< $uid:atom_name atom$ >>::l
-	) atoms [] in
-	<:str_item< type atom = [ $list:wrap$ ] >>
+let value_type _loc comps =
+	let ts = StringMap.fold (fun comp n l ->
+		let args = fold_range (fun acc _ -> <:ctyp< rvalue >>::acc) [] 1 (n+1) in
+		(ctyp_of_cons _loc (comp_name comp) args)::l
+	) comps [] in
+	<:str_item< type rvalue = [ $list:ts$ ] >>
 ;;
 
-let atoms_repr _loc atoms =
-	let cases = StringSet.fold (fun atom l ->
-		(<:match_case< $uid:atom_name atom$ -> $str:atom$ >>)::l
-	) atoms [] in
-	<:str_item< value string_of_atom = fun [ $list:cases$ ] >>
+let value_repr _loc comps =
+	let cases = StringMap.fold (fun comp n l ->
+		let args = fold_range (fun acc i -> (pred_var_name i)::acc) [] 1 (n+1) in
+		let patt = patt_of_cons _loc (comp_name comp) (List.map (lid_patt _loc) args)
+		and expr = match concat_expr ~sep:"," _loc (List.map (fun a ->
+			<:expr< string_of_rvalue $lid:a$ >>
+		) args) with
+		| None -> <:expr< $str:comp$ >>
+		| Some e -> <:expr< $str:comp ^ "("$ ^ $e$ ^ ")" >>
+		in
+		<:match_case< $patt$ -> $expr$ >> ::l
+	) comps [] in
+	<:str_item< value rec string_of_rvalue = fun [ $list:cases$ ] >>
 ;;
 
 (** Env management **)
 
 let empty = StringMap.empty ;;
 
-let bound map = function
+let rec bound map = function
 	| Var (v,_) -> StringMap.mem v map
-	| Atom (_,_) -> true
+	| Comp (_,ts,_) -> List.for_all (bound map) ts
 	| Anon _ -> false
 ;;
 
@@ -91,11 +104,11 @@ let lookup map v =
 	StringMap.find v map
 ;;
 
-let bind map v id =
+let bind_or_test map tsts v id =
 	try
 		let id' = lookup map v in
-		map, Some id'
-	with Not_found -> StringMap.add v id map, None
+		map, (id,id')::tsts
+	with Not_found -> StringMap.add v id map, tsts
 ;;
 
 (**
@@ -129,28 +142,41 @@ let goal_ins _loc ev = List.rev (List.fold_left (fun acc -> function
 exception UnboundVar of string * Loc.t;;
 
 (** Prepare exprs from open terms **)
-let goal_outs env t2 =
-	List.map (function
-		| Atom (a, _loc) -> uid_expr _loc (atom_name a)
-		| Var (v, _loc) ->
-			(try lid_expr _loc (lookup env v)
-			with Not_found -> raise (UnboundVar (v,_loc)))
-		| Anon _loc -> raise (UnboundVar ("_",_loc))
-	) t2
+let rec goal_outs env t2 = List.map (function
+	| Comp (c, ts, _loc) -> expr_of_cons _loc (comp_name c) (goal_outs env ts)
+	| Var (v, _loc) ->
+		(try lid_expr _loc (lookup env v)
+		with Not_found -> raise (UnboundVar (v,_loc)))
+	| Anon _loc -> raise (UnboundVar ("_",_loc))
+) t2 ;;
+
+(** Create patterns from a list of terms, meanwhile update env,c,t **)
+let rec patts_of_ts env c t ts =
+	let env,c,t,p = List.fold_left (fun (env,c,t,p) -> function
+		| Comp (cn,ts,_loc) ->
+			let env,c,t,in_p = patts_of_ts env c t ts in
+			env, c, t, (patt_of_cons _loc (comp_name cn) in_p)::p
+		| Var (v,_loc) ->
+			let id = pred_var_name c and c = c + 1 in
+			let env,t = bind_or_test env t v id in
+			env, c, t, (lid_patt _loc id)::p
+		| Anon _loc -> env, c, t, <:patt< _ >>::p
+	) (env,c,t,[]) ts in
+	env, c, t, List.rev p
 ;;
 
 (** Visit terms of a goal, update env and tests **)
-let terms _loc env t1 =
-	let env,tsts = List.fold_left (fun (env,tsts) -> function
-		| Atom (a, _loc), id -> env, (id, Test_uid (atom_name a))::tsts
+let terms _loc env c t1 =
+	let env,c,ep,t = List.fold_left (fun (env,c,ep,t) -> function
+		| Comp (cn, ts, _loc), id ->
+			let env,c,t,in_p = patts_of_ts env c t ts in
+			env, c, (lid_expr _loc id, patt_of_cons _loc (comp_name cn) in_p)::ep, t
 		| Var (v, _loc), id ->
-			(let (env,id') = bind env v id in
-			env, match id' with
-				| None -> tsts
-				| Some id' -> (id, Test_lid id')::tsts)
-		| Anon _loc, id -> env, tsts
-	) (env,[]) t1 in
-	(env, expand_tests _loc tsts)
+			let env,t = bind_or_test env t v id in
+			env, c, ep, t
+		| Anon _loc, _ -> env, c, ep, t
+	) (env,c,[],[]) t1 in
+	env, c, expand_tests _loc ep t
 ;;
 
 (** Visit goals of a rule **)
@@ -159,7 +185,7 @@ let goal (env,c,f) ((n,_),ts,_loc) =
 	let call = lid_expr _loc (pred_name n v) in
 	let c,ev = extend_version c (version_neg v) in
 	let ins = goal_ins _loc ev and t1,t2 = recombine_terms ts ev in
-	let env,tst = terms _loc env t1 in
+	let env, c, tst = terms _loc env c t1 in
 	let outs =
 		try goal_outs env t2
 		(* we select a version with only bound vars *)
@@ -176,7 +202,7 @@ let goal (env,c,f) ((n,_),ts,_loc) =
 (** Visit rules of a predicate version **)
 let rule ev c (ts,goals,_loc) =
 	let t1,t2 = recombine_terms ts ev in
-	let env,tst = terms _loc empty t1 in
+	let env,c,tst = terms _loc empty c t1 in
 	let env,c,f = List.fold_left goal (env,c,(fun body -> body)) goals in
 	let outs = goal_outs env t2 in
 	let body = fun_apply _loc (lid_expr _loc f_name) outs in
@@ -207,9 +233,9 @@ let pred _loc (name,n) rs = versions_fold (fun a v ->
 
 (** Starters **)
 
-let prog_atoms _loc prog =
-	let atoms = atoms prog in
-	[atoms_type _loc atoms; atoms_repr _loc atoms]
+let prog_statics _loc prog =
+	let statics = statics prog in
+	[value_type _loc statics; value_repr _loc statics]
 ;;
 
 let prog_rules _loc prog =
@@ -218,4 +244,3 @@ let prog_rules _loc prog =
 	) prog [] in
 	[ <:str_item< value rec $list:defs$ >> ]
 ;;
-

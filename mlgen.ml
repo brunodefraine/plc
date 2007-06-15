@@ -25,6 +25,41 @@ let tuple_patt _loc = function
 	| p::ps -> <:patt< ($p$,$list:ps$) >>
 ;;
 
+let ctyp_of_cons _loc n cs =
+	match cs with
+	| [] -> <:ctyp< $uid:n$ >>
+	| c::cs ->
+		let argt = List.fold_left (fun acc c ->
+			<:ctyp< $acc$ and $c$ >>
+		) c cs in
+		<:ctyp< $uid:n$ of $argt$ >>
+;;
+
+let patt_of_cons _loc n ps =
+	List.fold_left (fun acc p ->
+		<:patt< $acc$ $p$ >>
+	) <:patt< $uid:n$ >> ps
+;;
+
+let expr_of_cons _loc n es =
+	List.fold_left (fun acc e ->
+		<:expr< $acc$ $e$ >>
+	) <:expr< $uid:n$ >> es
+;;
+
+let concat_expr ?sep _loc strs =
+	List.fold_left (fun acc s ->
+		match acc with
+		| Some e ->
+		begin
+			match sep with
+			| Some sep -> Some <:expr< $e$ ^ $str:sep$ ^ $s$ >>
+			| None -> Some <:expr< $e$ ^ $s$ >> 
+		end
+		| None -> Some s
+	) None strs
+;;
+
 let fun_args _loc args body =
 	if args = [] then <:expr< fun () -> $body$ >>
 	else List.fold_right (fun arg body ->
@@ -40,6 +75,7 @@ let fun_apply _loc e args =
 ;;
 
 let test_expr _loc l =
+	let l = List.map (fun (a,b) -> (lid_expr _loc a, lid_expr _loc b)) l in
 	let rec aux e = function
 		| [] -> e
 		| (a,b)::l -> aux <:expr< $e$ && $a$ = $b$ >> l
@@ -48,17 +84,10 @@ let test_expr _loc l =
 	| (a,b)::l -> Some (aux <:expr< $a$ = $b$ >> l)		
 ;;
 
-type test_subject = Test_uid of string | Test_lid of string ;;
-
-let expand_tests _loc l =
-	if l = [] then None
+let expand_tests _loc ep t =
+	if ep = [] && t = [] then None
 	else
-		let e,p,t = List.fold_left (fun (e,p,t) -> function
-			| id, Test_uid uid ->
-				(lid_expr _loc id)::e, (uid_patt _loc uid)::p, t
-			| id, Test_lid lid ->
-				e, p, (lid_expr _loc id, lid_expr _loc lid)::t
-		) ([],[],[]) l in
+		let e,p = List.split ep in
 		Some (tuple_expr _loc e, tuple_patt _loc p, test_expr _loc t)
 ;;
 
