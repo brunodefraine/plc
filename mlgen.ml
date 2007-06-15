@@ -6,6 +6,10 @@ let format_loc _loc =
 	Loc.to_string _loc
 ;;
 
+let warning _loc msg =
+	Printf.eprintf "%s:\nWarning: %s\n" (format_loc _loc) msg
+;;
+
 (** AST Helpers **)
 
 let lid_patt _loc n = <:patt< $lid:n$ >> ;;

@@ -94,10 +94,16 @@ let value_repr _loc comps =
 
 let empty = StringMap.empty ;;
 
-let rec bound map = function
-	| Var (v,_) -> StringMap.mem v map
-	| Comp (_,ts,_) -> List.for_all (bound map) ts
-	| Anon _ -> false
+let rec bound ?(top=true) map =
+	let sem_warn _loc v =
+		if not top then warning _loc
+		("unbound " ^ v ^ " in compound term of goal;" ^
+		" result might not match Prolog semantics")
+	in function
+	| Var (v,_loc) ->
+		if StringMap.mem v map then true else (sem_warn _loc v; false)
+	| Comp (_,ts,_) -> List.for_all (bound ~top:false map) ts
+	| Anon _loc -> sem_warn _loc "_"; false
 ;;
 
 let lookup map v =
@@ -223,12 +229,10 @@ let pred_version _loc n rs v =
 
 (** Visit a predicate to produce all possible versions **)
 let pred _loc (name,n) rs = versions_fold (fun a v ->
-	try (pred_version _loc name rs v)::a
-	with UnboundVar(var,_loc) ->
-		Printf.eprintf
-			"%s:\nWarning: skipping %s, unbound %s\n"
-			(format_loc _loc) (pred_name name v) var;
-		a
+	try (pred_version _loc name rs v)::a with
+	| UnboundVar(var,_loc) ->
+		let name = pred_name name v in
+		warning _loc (Printf.sprintf "skipping %s, unbound %s" name var); a
 ) [] n ;;
 
 (** Starters **)
