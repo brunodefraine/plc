@@ -102,3 +102,9 @@ let apply_test _loc tst body  = match tst with
 		<:expr< match $e$ with [ $p$ when $t$ -> $body$ | _ -> () ] >>
 	| None -> body
 ;;
+
+let wrap _loc call ins outs tst body =
+	let body = apply_test _loc tst body in
+	let body = fun_args _loc ins body in
+	fun_apply _loc call (body::outs)
+;;

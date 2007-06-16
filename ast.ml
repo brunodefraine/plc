@@ -24,8 +24,14 @@ type 'loc term =
 (* e.g. parent(X,maja) *)
 type 'loc goal = pred * 'loc term list * 'loc ;;
 
+type 'loc ext_goal =
+	| Pos of 'loc goal * 'loc
+	| Neg of 'loc goal * 'loc
+	| Same of 'loc term * 'loc term * 'loc
+;;
+
 (* e.g. for sibling/2: (X,Y) :- parent(Z,X), parent(Z,Y). *)
-type 'loc rule = 'loc term list * 'loc goal list * 'loc;;
+type 'loc rule = 'loc term list * 'loc ext_goal list * 'loc;;
 
 (* e.g. +X or -Y *)
 type 'loc arg_mask = ArgOpen of 'loc | ArgClosed of 'loc | ArgAny of 'loc ;;
@@ -53,10 +59,12 @@ let rec statics_of_terms acc terms =
 ;;
 
 let statics (prog : 'a prog) = PredMap.fold (fun pred (rules,_) acc ->
-	List.fold_left (fun acc (terms,goals,_) ->
+	List.fold_left (fun acc (terms,egoals,_) ->
 		let acc = statics_of_terms acc terms in
-		List.fold_left (fun acc (_,terms,_) ->
-			statics_of_terms acc terms
-		) acc goals
+		List.fold_left (fun acc -> function
+			| Pos ((_,terms,_),_) -> statics_of_terms acc terms
+			| Neg ((_,terms,_),_) -> statics_of_terms acc terms
+			| Same (t1,t2,_) -> statics_of_terms acc [t1; t2]
+		) acc egoals
 	) acc rules
 ) prog StringMap.empty ;;

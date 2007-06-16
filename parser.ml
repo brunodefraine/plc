@@ -3,17 +3,18 @@ open Camlp4.PreCast ;;
 
 let prog = Gram.Entry.mk "prog" ;;
 let rule = Gram.Entry.mk "rule" ;;
+let ext_goal = Gram.Entry.mk "ext_goal" ;;
 let goal = Gram.Entry.mk "goal" ;;
 let term = Gram.Entry.mk "term" ;;
 let mask = Gram.Entry.mk "mask";
 
 type rule_or_mask =
-	  Rule of Loc.t goal * Loc.t goal list * Loc.t
+	  Rule of Loc.t goal * Loc.t ext_goal list * Loc.t
 	| Mask of pred * Loc.t arg_mask list * Loc.t
 ;;
 
 EXTEND Gram
-GLOBAL: prog rule goal term mask;
+GLOBAL: prog rule ext_goal goal term mask;
 
 prog:
 	[ [ rd = LIST0 rule_or_mask ->
@@ -44,7 +45,7 @@ rule:
 	] ];
 
 clauses:
-	[ [ ":"; "-"; r = LIST1 goal SEP "," -> r ] ];
+	[ [ ":"; "-"; r = LIST1 ext_goal SEP "," -> r ] ];
 
 goal:
 	[ [ x = LIDENT; t = OPT args ->
@@ -54,6 +55,13 @@ goal:
 		in
 		((x,List.length terms),terms,_loc)
 	] ];
+
+ext_goal:
+	[
+		[ "not"; "("; g = goal ;")" -> Neg (g,_loc)
+		| g = goal -> Pos (g,_loc)
+		| x = term; "="; y = term -> Same (x,y,_loc) ]
+	];
 
 args:
 	[ [ "("; r = LIST1 term SEP ","; ")" -> r ] ];

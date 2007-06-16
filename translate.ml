@@ -82,6 +82,8 @@ let pred_var_name n = "_arg" ^ (string_of_int n) ;;
 
 let f_name = "_f" ;;
 
+let found_name = "Found" ;;
+
 (** Atom translation **)
 
 let value_type _loc comps =
@@ -105,6 +107,10 @@ let value_repr _loc comps =
 		<:match_case< $patt$ -> $expr$ >> ::l
 	) comps [] in
 	<:str_item< value rec string_of_rvalue = fun [ $list:cases$ ] >>
+;;
+
+let found_exception _loc =
+	<:str_item< exception $uid:found_name$ >>
 ;;
 
 (** Env management **)
@@ -197,12 +203,15 @@ let terms _loc env c t1 =
 ;;
 
 (** Visit goals of a rule **)
-let goal (env,c,f) ((n,_),ts,_loc) =
+let goal pos (env,c,f) ((n,_),ts,_loc) =
 	let v = version_reconstruct (List.rev_map (fun t -> not (bound env t)) ts) in
 	let call = lid_expr _loc (pred_name n v) in
 	let c,ev = extend_version c (version_neg v) in
 	let ins = goal_ins _loc ev and t1,t2 = recombine_terms ts ev in
-	let env, c, tst = terms _loc env c t1 in
+	let env, c, tst =
+		let env', c', tst' = terms _loc env c t1 in
+		if pos then env', c', tst' else env, c, tst'
+	in
 	let outs =
 		try goal_outs env t2
 		(* we select a version with only bound vars *)
@@ -210,19 +219,27 @@ let goal (env,c,f) ((n,_),ts,_loc) =
 	in
 	(if tst <> None then
 		warning _loc "will unify after satisfying goal, might not match Prolog semantics";
-	env, c, (fun body ->
-		let body = apply_test _loc tst body in
-		let body = fun_args _loc ins body in
-		let body = fun_apply _loc call (body::outs) in
-		f body
+	env, c,
+	if pos then (fun body -> f (wrap _loc call ins outs tst body))
+	else
+		let nbody = wrap _loc call ins outs tst <:expr< raise $uid:found_name$ >> in
+		(fun body ->
+			let body = <:expr< (try $nbody$; fun () -> $body$ with [ $uid:found_name$ -> fun () -> () ]) () >> in
+			f body
 	))
 ;;
 
+let egoal acc = function
+	| Pos (g,_loc) -> goal true acc g
+	| Neg (g,_loc) -> goal false acc g
+	| Same (_,_,_) -> failwith "Unsupported"
+;;
+
 (** Visit rules of a predicate version **)
-let rule ev c (ts,goals,_loc) =
+let rule ev c ((ts,egoals,_loc):'a rule) =
 	let t1,t2 = recombine_terms ts ev in
 	let env,c,tst = terms _loc empty c t1 in
-	let env,c,f = List.fold_left goal (env,c,(fun body -> body)) goals in
+	let env,c,f = List.fold_left egoal (env,c,(fun body -> body)) egoals in
 	let outs = goal_outs env t2 in
 	let body = fun_apply _loc (lid_expr _loc f_name) outs in
 	let body = f body in
@@ -253,12 +270,12 @@ let pred _loc (name,n) rs ms = versions_fold (fun a v ->
 
 (** Starters **)
 
-let prog_statics _loc prog =
+let prog_statics _loc (prog : 'a prog) =
 	let statics = statics prog in
-	[value_type _loc statics; value_repr _loc statics]
+	[value_type _loc statics; value_repr _loc statics; found_exception _loc]
 ;;
 
-let prog_rules _loc prog =
+let prog_rules _loc (prog : 'a prog) =
 	let defs = PredMap.fold (fun p (rs,ms) acc ->
 		List.append (pred _loc p (List.rev rs) (List.rev ms)) acc
 	) prog [] in
