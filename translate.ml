@@ -111,16 +111,10 @@ let value_repr _loc comps =
 
 let empty = StringMap.empty ;;
 
-let rec bound ?(top=true) map =
-	let sem_warn _loc v =
-		if not top then warning _loc
-		("unbound " ^ v ^ " in compound term of goal;" ^
-		" result might not match Prolog semantics")
-	in function
-	| Var (v,_loc) ->
-		if StringMap.mem v map then true else (sem_warn _loc v; false)
-	| Comp (_,ts,_) -> List.for_all (bound ~top:false map) ts
-	| Anon _loc -> sem_warn _loc "_"; false
+let rec bound map = function
+	| Var (v,_loc) -> StringMap.mem v map
+	| Comp (_,ts,_) -> List.for_all (bound map) ts
+	| Anon _loc -> false
 ;;
 
 let lookup map v =
@@ -214,12 +208,14 @@ let goal (env,c,f) ((n,_),ts,_loc) =
 		(* we select a version with only bound vars *)
 		with UnboundVar _ -> assert false
 	in
+	(if tst <> None then
+		warning _loc "will unify after satisfying goal, might not match Prolog semantics";
 	env, c, (fun body ->
 		let body = apply_test _loc tst body in
 		let body = fun_args _loc ins body in
 		let body = fun_apply _loc call (body::outs) in
 		f body
-	)
+	))
 ;;
 
 (** Visit rules of a predicate version **)
