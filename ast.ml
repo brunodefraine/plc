@@ -27,8 +27,14 @@ type 'loc goal = pred * 'loc term list * 'loc ;;
 (* e.g. for sibling/2: (X,Y) :- parent(Z,X), parent(Z,Y). *)
 type 'loc rule = 'loc term list * 'loc goal list * 'loc;;
 
-(* Complete program: map from pred to rule list *)
-type 'loc prog = 'loc rule list PredMap.t ;;
+(* e.g. +X or -Y *)
+type 'loc arg_mask = ArgOpen of 'loc | ArgClosed of 'loc | ArgAny of 'loc ;;
+
+(* e.g. for same/2: +X, ?Y *)
+type 'loc mask = 'loc arg_mask list * 'loc ;;
+
+(* Complete program: map from pred to rule list + mask list *)
+type 'loc prog = ('loc rule list * 'loc mask list) PredMap.t ;;
 
 let rec statics_of_terms acc terms =
 	List.fold_left (fun comps term -> match term with
@@ -46,7 +52,7 @@ let rec statics_of_terms acc terms =
 	) acc terms
 ;;
 
-let statics (prog : 'a prog) = PredMap.fold (fun pred rules acc ->
+let statics (prog : 'a prog) = PredMap.fold (fun pred (rules,_) acc ->
 	List.fold_left (fun acc (terms,goals,_) ->
 		let acc = statics_of_terms acc terms in
 		List.fold_left (fun acc (_,terms,_) ->

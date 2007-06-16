@@ -55,6 +55,23 @@ let version_neg (i,k) =
 	(1 lsl k) - 1 - i, k
 ;;
 
+(** Open/closed versions and argument masks **)
+
+let arg_decl_allows a o = match a with
+	| ArgOpen _ -> o
+	| ArgClosed _ -> not o
+	| ArgAny _ -> true
+;;
+
+let version_matches_mask v (m,_) =
+	let (m,s) = version_fold (fun (m,s) o ->
+		match m with
+		| a::m -> m, s && arg_decl_allows a o
+		| [] -> assert false
+	) (m,true) v in
+	assert (m = []); s
+;;
+
 (** Name functions **)
 
 let comp_name n = String.capitalize n ;;
@@ -228,11 +245,14 @@ let pred_version _loc n rs v =
 ;;
 
 (** Visit a predicate to produce all possible versions **)
-let pred _loc (name,n) rs = versions_fold (fun a v ->
-	try (pred_version _loc name rs v)::a with
-	| UnboundVar(var,_loc) ->
-		let name = pred_name name v in
-		warning _loc (Printf.sprintf "skipping %s, unbound %s" name var); a
+let pred _loc (name,n) rs ms = versions_fold (fun a v ->
+	if ms = [] || List.exists (version_matches_mask v) ms then
+		try (pred_version _loc name rs v)::a with
+		| UnboundVar(var,_loc) ->
+			let name = pred_name name v in
+			warning _loc (Printf.sprintf "skipping %s, unbound %s" name var);
+			a
+	else a
 ) [] n ;;
 
 (** Starters **)
@@ -243,8 +263,8 @@ let prog_statics _loc prog =
 ;;
 
 let prog_rules _loc prog =
-	let defs = PredMap.fold (fun p rs acc ->
-		List.append (pred _loc p (List.rev rs)) acc
+	let defs = PredMap.fold (fun p (rs,ms) acc ->
+		List.append (pred _loc p (List.rev rs) (List.rev ms)) acc
 	) prog [] in
 	[ <:str_item< value rec $list:defs$ >> ]
 ;;
