@@ -108,3 +108,7 @@ let wrap _loc call ins outs tst body =
 	let body = fun_args _loc ins body in
 	fun_apply _loc call (body::outs)
 ;;
+
+let safe_catch _loc e1 e2 exc =
+	<:expr< try $e1$; fun () -> $e2$ with [ $uid:exc$ -> fun () -> () ] () >> 
+;;

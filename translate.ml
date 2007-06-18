@@ -216,17 +216,15 @@ let goal pos (env,c,f) ((n,_),ts,_loc) =
 		try goal_outs env t2
 		(* we select a version with only bound vars *)
 		with UnboundVar _ -> assert false
-	in
-	(if tst <> None then
-		warning _loc "will unify after satisfying goal, might not match Prolog semantics";
-	env, c,
-	if pos then (fun body -> f (wrap _loc call ins outs tst body))
-	else
-		let nbody = wrap _loc call ins outs tst <:expr< raise $uid:found_name$ >> in
-		(fun body ->
-			let body = <:expr< (try $nbody$; fun () -> $body$ with [ $uid:found_name$ -> fun () -> () ]) () >> in
-			f body
-	))
+	in begin
+		if tst <> None then
+			warning _loc "will unify after satisfying goal, might not match Prolog semantics";
+		env, c,
+		if pos then (fun body -> f (wrap _loc call ins outs tst body))
+		else
+			let nbody = wrap _loc call ins outs tst <:expr< raise $uid:found_name$ >> in
+			(fun body -> f (safe_catch _loc nbody body found_name))
+	end
 ;;
 
 let egoal acc = function
