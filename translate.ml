@@ -219,7 +219,8 @@ exception OpenUnify of Loc.t;;
 let rec unify _loc (env,c,tep,tst,a) = function
 	| Comp (cn,ts,_), Comp (cn',ts',_) ->
 		if cn = cn' && List.length ts = List.length ts' then
-			List.fold_left (unify _loc) (env,c,tep,tst,a) (List.combine ts ts')
+			Loc.raise _loc (Failure "Deep compound-to-compound unification unsupported")
+			(* List.fold_left (unify _loc) (env,c,tep,tst,a) (List.combine ts ts') *)
 		else env, c, tep, tst, true
 	| Var (v,_locv), Var (v',_) ->
 		(match (binding env v, binding env v') with

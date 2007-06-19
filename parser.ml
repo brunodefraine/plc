@@ -13,6 +13,24 @@ type rule_or_mask =
 	| Mask of pred * Loc.t arg_mask list * Loc.t
 ;;
 
+let goal_lid (x,t,_loc) =
+	let terms = match t with
+	| Some t -> t
+	| None -> []
+	in
+	((x,List.length terms),terms,_loc)
+;;
+
+let term_lid (x,t,_loc) =
+	(match (x,t) with
+	| ("_",None) -> Anon _loc
+	| ("_",Some _) -> Loc.raise _loc (Failure "Anonymous with arguments")
+	| (x,None) -> Comp (x,[],_loc)
+	| (x,Some t) -> Comp (x,t,_loc))
+;;
+
+let term_uid (x,_loc) = Var (x,_loc) ;;
+
 EXTEND Gram
 GLOBAL: prog rule ext_goal goal term mask;
 
@@ -47,35 +65,32 @@ rule:
 clauses:
 	[ [ ":"; "-"; r = LIST1 ext_goal SEP "," -> r ] ];
 
-goal:
-	[ [ x = LIDENT; t = OPT args ->
-		let terms = match t with
-			| Some t -> t
-			| None -> []
-		in
-		((x,List.length terms),terms,_loc)
-	] ];
-
 ext_goal:
 	[
 		[ "not"; "("; g = goal ;")" -> Neg (g,_loc)
-		| x = term;  "="; y = term -> Same (x,y,_loc)
-		| x = term; "\\="; y = term -> Diff (x,y,_loc)
-		| g = goal -> Pos (g,_loc) ]
+		| (x,t,l) = ident_args; "="; y = term -> Same (term_lid (x,t,l),y,_loc)
+		| (x,l) = var; "="; y = term -> Same (term_uid (x,l),y,_loc)
+		| (x,t,l) = ident_args; "\\="; y = term -> Diff (term_lid (x,t,l),y,_loc)
+		| (x,l) = var; "\\="; y = term -> Diff (term_uid (x,l),y,_loc)
+		| (x,t,l) = ident_args -> Pos (goal_lid (x,t,l),_loc) ]
 	];
+
+ident_args:
+	[ [ x = LIDENT; t = OPT args -> x,t,_loc ] ];
+
+var:
+	[ [ x = UIDENT -> x,_loc ] ];
+
+goal:
+	[ [ (x,t,l) = ident_args -> goal_lid (x,t,l) ] ];
 
 args:
 	[ [ "("; r = LIST1 term SEP ","; ")" -> r ] ];
 
 term:
 	[
-		[ x = LIDENT; t = OPT args ->
-			(match (x,t) with
-			| ("_",None) -> Anon _loc
-			| ("_",Some _) -> Loc.raise _loc (Failure "Anonymous with arguments")
-			| (x,None) -> Comp (x,[],_loc)
-			| (x,Some t) -> Comp (x,t,_loc))
-		| x = UIDENT -> Var (x,_loc) ]
+		[ (x,t,l) = ident_args -> term_lid (x,t,l)
+		| (x,l) = var -> term_uid (x,l)  ]
 	];
 
 mask:
@@ -85,12 +100,9 @@ mask:
 
 arg_mask:
 	[
-		[ "+"; _ = OPT var_name -> ArgClosed _loc
-		| "-"; _ = OPT var_name -> ArgOpen _loc
-		| "?"; _ = OPT var_name -> ArgAny _loc ]
+		[ "+"; _ = OPT var -> ArgClosed _loc
+		| "-"; _ = OPT var -> ArgOpen _loc
+		| "?"; _ = OPT var -> ArgAny _loc ]
 	];
-
-var_name:
-	[ [ x = UIDENT -> x ] ];
 
 END
