@@ -127,6 +127,12 @@ let lookup map v =
 	StringMap.find v map
 ;;
 
+let binding map v =
+	try
+		Some (lookup map v)
+	with Not_found -> None
+;;
+
 let bind_or_test map tsts v id =
 	try
 		let id' = lookup map v in
@@ -165,25 +171,31 @@ let goal_ins _loc ev = List.rev (List.fold_left (fun acc -> function
 exception UnboundVar of string * Loc.t;;
 
 (** Prepare exprs from open terms **)
-let rec goal_outs env t2 = List.map (function
-	| Comp (c, ts, _loc) -> expr_of_cons _loc (comp_name c) (goal_outs env ts)
+let rec goal_out_comp env c ts _loc =
+	expr_of_cons _loc (comp_name c) (goal_outs env ts)
+and goal_out env = function
+	| Comp (c, ts, _loc) -> goal_out_comp env c ts _loc
 	| Var (v, _loc) ->
 		(try lid_expr _loc (lookup env v)
 		with Not_found -> raise (UnboundVar (v,_loc)))
 	| Anon _loc -> raise (UnboundVar ("_",_loc))
-) t2 ;;
+and	goal_outs env t2 = List.map (goal_out env) t2 ;;
 
 (** Create patterns from a list of terms, meanwhile update env,c,t **)
-let rec patts_of_ts env c t ts =
-	let env,c,t,p = List.fold_left (fun (env,c,t,p) -> function
-		| Comp (cn,ts,_loc) ->
-			let env,c,t,in_p = patts_of_ts env c t ts in
-			env, c, t, (patt_of_cons _loc (comp_name cn) in_p)::p
-		| Var (v,_loc) ->
-			let id = pred_var_name c and c = c + 1 in
-			let env,t = bind_or_test env t v id in
-			env, c, t, (lid_patt _loc id)::p
-		| Anon _loc -> env, c, t, <:patt< _ >>::p
+let rec patt_of_comp env c t cn ts _loc =
+	let env,c,t,in_p = patts_of_ts env c t ts in
+	env, c, t, (patt_of_cons _loc (comp_name cn) in_p)	 
+and patt_of_t env c t = function
+	| Comp (cn,ts,_loc) -> patt_of_comp env c t cn ts _loc
+	| Var (v,_loc) ->
+		let id = pred_var_name c and c = c + 1 in
+		let env,t = bind_or_test env t v id in
+		env, c, t, (lid_patt _loc id)
+	| Anon _loc -> env, c, t, <:patt< _ >>
+and patts_of_ts env c t ts =
+	let env,c,t,p = List.fold_left (fun (env,c,t,p) term ->
+		let env,c,t,patt = patt_of_t env c t term in
+		env,c,t,(patt::p)
 	) (env,c,t,[]) ts in
 	env, c, t, List.rev p
 ;;
@@ -199,11 +211,38 @@ let terms _loc env c t1 =
 			env, c, ep, t
 		| Anon _loc, _ -> env, c, ep, t
 	) (env,c,[],[]) t1 in
-	env, c, expand_tests _loc ep t
+	env, c, expand_tests _loc ep t false
+;;
+
+exception OpenUnify of Loc.t;;
+
+let rec unify _loc (env,c,tep,tst,a) = function
+	| Comp (cn,ts,_), Comp (cn',ts',_) ->
+		if cn = cn' && List.length ts = List.length ts' then
+			List.fold_left (unify _loc) (env,c,tep,tst,a) (List.combine ts ts')
+		else env, c, tep, tst, true
+	| Var (v,_locv), Var (v',_) ->
+		(match (binding env v, binding env v') with
+		| Some id, Some id' -> env, c, tep, (id,id')::tst, a
+		| Some id, None -> StringMap.add v' id env, c, tep, tst, a
+		| None, Some id -> StringMap.add v id env, c, tep, tst, a
+		| None, None -> raise (OpenUnify _loc))
+	| Anon _, _ | _, Anon _ -> env, c, tep, tst, a
+	| Var (v,_locv), Comp (cn,ts,_locc) | Comp (cn,ts,_locc), Var (v,_locv) ->
+		match binding env v with
+		| Some id ->
+			let env,c,tst,tp = patt_of_comp env c tst cn ts _locc in
+			env, c, (lid_expr _locv id,tp)::tep, tst, a
+		| None ->
+		(try
+			let te = goal_out_comp env cn ts _locc in
+			let id = pred_var_name c and c = c + 1 in
+			(StringMap.add v id env), c, (te,lid_patt _loc id)::tep, tst, a
+		with UnboundVar _ -> raise (OpenUnify _loc))
 ;;
 
 (** Visit goals of a rule **)
-let goal pos (env,c,f) ((n,_),ts,_loc) =
+let goal (env,c,f) pos ((n,_),ts,_loc) =
 	let v = version_reconstruct (List.rev_map (fun t -> not (bound env t)) ts) in
 	let call = lid_expr _loc (pred_name n v) in
 	let c,ev = extend_version c (version_neg v) in
@@ -217,20 +256,34 @@ let goal pos (env,c,f) ((n,_),ts,_loc) =
 		(* we select a version with only bound vars *)
 		with UnboundVar _ -> assert false
 	in begin
-		if tst <> None then
-			warning _loc "will unify after satisfying goal, might not match Prolog semantics";
+		(match tst with
+		| Maybe (_,_,_) ->
+			warning _loc "will unify after satisfying goal, might not match Prolog semantics"
+		| _ -> ());
 		env, c,
 		if pos then (fun body -> f (wrap _loc call ins outs tst body))
 		else
 			let nbody = wrap _loc call ins outs tst <:expr< raise $uid:found_name$ >> in
 			(fun body -> f (safe_catch _loc nbody body found_name))
 	end
+;;	
+
+let same_goal _loc (env,c,f) pos t t' =
+	let env, c, tst =
+		let env', c', tep', tst', a' = unify _loc (env,c,[],[],false) (t,t') in
+		let tst' = expand_tests _loc tep' tst' a' in
+		if pos then env', c', tst' else env, c, tst'
+	in
+	env, c,
+		if pos then (fun body -> f (apply_test _loc tst body <:expr< () >>))
+		else (fun body -> f (apply_test _loc tst <:expr< () >> body))
 ;;
 
 let egoal acc = function
-	| Pos (g,_loc) -> goal true acc g
-	| Neg (g,_loc) -> goal false acc g
-	| Same (_,_,_) -> failwith "Unsupported"
+	| Pos (g,_loc) -> goal acc true g
+	| Neg (g,_loc) -> goal acc false g
+	| Same (t,t',_loc) -> same_goal _loc acc true t t'
+	| Diff (t,t',_loc) -> same_goal _loc acc false t t'
 ;;
 
 (** Visit rules of a predicate version **)
@@ -241,7 +294,7 @@ let rule ev c ((ts,egoals,_loc):'a rule) =
 	let outs = goal_outs env t2 in
 	let body = fun_apply _loc (lid_expr _loc f_name) outs in
 	let body = f body in
-	apply_test _loc tst body
+	apply_test _loc tst body <:expr< () >>
 ;;
 
 (** Visit a predicate to produce a certain version **)
@@ -258,10 +311,13 @@ let pred_version _loc n rs v =
 (** Visit a predicate to produce all possible versions **)
 let pred _loc (name,n) rs ms = versions_fold (fun a v ->
 	if ms = [] || List.exists (version_matches_mask v) ms then
+		let fname = pred_name name v in
 		try (pred_version _loc name rs v)::a with
 		| UnboundVar(var,_loc) ->
-			let name = pred_name name v in
-			warning _loc (Printf.sprintf "skipping %s, unbound %s" name var);
+			warning _loc (Printf.sprintf "skipping %s, unbound %s" fname var);
+			a
+		| OpenUnify(_loc) ->
+			warning _loc (Printf.sprintf "skipping %s, open unification" fname);
 			a
 	else a
 ) [] n ;;

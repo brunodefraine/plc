@@ -28,6 +28,7 @@ type 'loc ext_goal =
 	| Pos of 'loc goal * 'loc
 	| Neg of 'loc goal * 'loc
 	| Same of 'loc term * 'loc term * 'loc
+	| Diff of 'loc term * 'loc term * 'loc
 ;;
 
 (* e.g. for sibling/2: (X,Y) :- parent(Z,X), parent(Z,Y). *)
@@ -54,7 +55,7 @@ let rec statics_of_terms acc terms =
 				with Not_found -> StringMap.add c n comps
 			in
 			statics_of_terms comps ts
-		| _ -> acc
+		| _ -> comps
 	) acc terms
 ;;
 
@@ -62,9 +63,10 @@ let statics (prog : 'a prog) = PredMap.fold (fun pred (rules,_) acc ->
 	List.fold_left (fun acc (terms,egoals,_) ->
 		let acc = statics_of_terms acc terms in
 		List.fold_left (fun acc -> function
-			| Pos ((_,terms,_),_) -> statics_of_terms acc terms
-			| Neg ((_,terms,_),_) -> statics_of_terms acc terms
-			| Same (t1,t2,_) -> statics_of_terms acc [t1; t2]
+			| Pos ((_,terms,_),_) | Neg ((_,terms,_),_) ->
+				statics_of_terms acc terms
+			| Same (t1,t2,_) | Diff (t1,t2,_) ->
+				statics_of_terms acc [t1; t2]
 		) acc egoals
 	) acc rules
 ) prog StringMap.empty ;;

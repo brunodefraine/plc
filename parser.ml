@@ -59,8 +59,9 @@ goal:
 ext_goal:
 	[
 		[ "not"; "("; g = goal ;")" -> Neg (g,_loc)
-		| g = goal -> Pos (g,_loc)
-		| x = term; "="; y = term -> Same (x,y,_loc) ]
+		| x = term;  "="; y = term -> Same (x,y,_loc)
+		| x = term; "\\="; y = term -> Diff (x,y,_loc)
+		| g = goal -> Pos (g,_loc) ]
 	];
 
 args:
