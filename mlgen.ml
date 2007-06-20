@@ -78,6 +78,11 @@ let fun_apply _loc e args =
 	) e args
 ;;
 
+let sequence _loc = function
+	| [e] -> e
+	| es -> <:expr< do { $list:es$ } >>
+;;
+
 let test_expr _loc l =
 	let l = List.map (fun (a,b) -> (lid_expr _loc a, lid_expr _loc b)) l in
 	let rec aux e = function

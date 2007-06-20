@@ -219,8 +219,10 @@ exception OpenUnify of Loc.t;;
 let rec unify _loc (env,c,tep,tst,a) = function
 	| Comp (cn,ts,_), Comp (cn',ts',_) ->
 		if cn = cn' && List.length ts = List.length ts' then
-			Loc.raise _loc (Failure "Deep compound-to-compound unification unsupported")
-			(* List.fold_left (unify _loc) (env,c,tep,tst,a) (List.combine ts ts') *)
+			List.fold_left (fun (env,c,tep,tst,a) ->
+				Loc.raise _loc (Failure "Deep compound-to-compound unification unsupported")
+				(* unify _loc (env,c,tep,tst,a) *)
+			) (env,c,tep,tst,a) (List.combine ts ts')
 		else env, c, tep, tst, true
 	| Var (v,_locv), Var (v',_) ->
 		(match (binding env v, binding env v') with
@@ -304,7 +306,7 @@ let pred_version _loc n rs v =
 	let c,ev = extend_version 0 v in
 	let args = goal_ins _loc ev in
 	let rs = List.map (rule ev c) rs in
-	let body = <:expr< do { $list:rs$ } >> in
+	let body = sequence _loc rs in
 	let f = fun_args _loc ((lid_patt _loc f_name)::args) body in
 	<:binding< $name$ = $f$ >>
 ;;
