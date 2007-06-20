@@ -84,7 +84,13 @@ let f_name = "_f" ;;
 
 let found_name = "Found" ;;
 
-(** Atom translation **)
+let notalist_name = "Not_a_list" ;;
+
+(** Atom/statics translation **)
+
+let excep_decl _loc n =
+	<:str_item< exception $uid:n$ >>
+;;
 
 let value_type _loc comps =
 	let ts = StringMap.fold (fun comp n l ->
@@ -93,6 +99,13 @@ let value_type _loc comps =
 	) comps [] in
 	<:str_item< type rvalue = [ $list:ts$ ] >>
 ;;
+
+let list_repr _loc = <:str_item<
+value rec list_of_rvalue = fun
+	[ Nil -> []
+	| Cons a b -> [ a :: list_of_rvalue b ]
+	| _ -> raise $uid:notalist_name$ ]
+>> ;;
 
 let value_repr _loc comps =
 	let cases = StringMap.fold (fun comp n l ->
@@ -106,11 +119,10 @@ let value_repr _loc comps =
 		in
 		<:match_case< $patt$ -> $expr$ >> ::l
 	) comps [] in
-	<:str_item< value rec string_of_rvalue = fun [ $list:cases$ ] >>
-;;
-
-let found_exception _loc =
-	<:str_item< exception $uid:found_name$ >>
+	<:str_item< value rec string_of_rvalue v =
+	try
+		"[" ^ String.concat "," (List.map string_of_rvalue (list_of_rvalue v)) ^ "]"
+	with [ $uid:notalist_name$ -> match v with [ $list:cases$ ] ] >>
 ;;
 
 (** Env management **)
@@ -329,7 +341,13 @@ let pred _loc (name,n) rs ms = versions_fold (fun a v ->
 
 let prog_statics _loc (prog : 'a prog) =
 	let statics = statics prog in
-	[value_type _loc statics; value_repr _loc statics; found_exception _loc]
+	let statics = StringMap.add "nil" 0 statics in
+	let statics = StringMap.add "cons" 2 statics in
+	[value_type _loc statics;
+	excep_decl _loc notalist_name;
+	list_repr _loc;
+	value_repr _loc statics;
+	excep_decl _loc found_name]
 ;;
 
 let prog_rules _loc (prog : 'a prog) =

@@ -29,7 +29,13 @@ let term_lid (x,t,_loc) =
 	| (x,Some t) -> Comp (x,t,_loc))
 ;;
 
-let term_uid (x,_loc) = Var (x,_loc) ;;
+let term_list _loc ts e =
+	List.fold_right (fun t c ->
+		Comp ("cons",[t;c],_loc)
+	) ts (match e with
+	| Some t -> t
+	| None -> Comp ("nil",[],_loc))
+;;
 
 EXTEND Gram
 GLOBAL: prog rule ext_goal goal term mask;
@@ -69,9 +75,9 @@ ext_goal:
 	[
 		[ "not"; "("; g = goal ;")" -> Neg (g,_loc)
 		| (x,t,l) = ident_args; "="; y = term -> Same (term_lid (x,t,l),y,_loc)
-		| (x,l) = var; "="; y = term -> Same (term_uid (x,l),y,_loc)
+		| x = other_term; "="; y = term -> Same (x,y,_loc)
 		| (x,t,l) = ident_args; "\\="; y = term -> Diff (term_lid (x,t,l),y,_loc)
-		| (x,l) = var; "\\="; y = term -> Diff (term_uid (x,l),y,_loc)
+		| x = other_term; "\\="; y = term -> Diff (x,y,_loc)
 		| (x,t,l) = ident_args -> Pos (goal_lid (x,t,l),_loc) ]
 	];
 
@@ -90,7 +96,13 @@ args:
 term:
 	[
 		[ (x,t,l) = ident_args -> term_lid (x,t,l)
-		| (x,l) = var -> term_uid (x,l)  ]
+		| t = other_term -> t ]
+	];
+
+other_term:
+	[
+		[ x = UIDENT -> Var (x,_loc)
+		| "["; t = LIST0 term SEP ","; e = OPT [ "|"; t = term -> t ]; "]" -> term_list _loc t e ]
 	];
 
 mask:
