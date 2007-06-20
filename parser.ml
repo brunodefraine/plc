@@ -102,6 +102,7 @@ term:
 other_term:
 	[
 		[ x = UIDENT -> Var (x,_loc)
+		| x = INT -> Integer (int_of_string x,_loc)
 		| "["; t = LIST0 term SEP ","; e = OPT [ "|"; t = term -> t ]; "]" -> term_list _loc t e ]
 	];
 

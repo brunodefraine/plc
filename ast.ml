@@ -13,9 +13,9 @@ end ;;
 
 module PredMap = Map.Make(Pred) ;;
 
-(* atoms and integers are constants *)
+(* terms are integers, (anonymous) variables and compound (possibly atoms) *)
 type 'loc term =
-	(*| Integer of int * 'loc *)
+	| Integer of int * 'loc
 	| Var of string * 'loc
 	| Anon of 'loc
 	| Comp of string * 'loc term list * 'loc

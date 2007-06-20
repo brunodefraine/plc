@@ -83,8 +83,24 @@ let pred_var_name n = "_arg" ^ (string_of_int n) ;;
 let f_name = "_f" ;;
 
 let found_name = "Found" ;;
-
 let notalist_name = "Not_a_list" ;;
+let type_name = "plval" ;;
+let int_name = "Int" ;;
+let cons_name = "cons" ;;
+let nil_name = "nil" ;;
+
+let list_of_name = "list_of_" ^ type_name ;;
+let string_of_name = "string_of_" ^ type_name ;;
+
+(** Aux **)
+
+let int_expr _loc i =
+	<:expr< $uid:int_name$ $int:(string_of_int i)$ >>
+;;
+
+let int_patt _loc i =
+	<:patt< $uid:int_name$ $int:(string_of_int i)$ >>
+;;
 
 (** Atom/statics translation **)
 
@@ -94,16 +110,16 @@ let excep_decl _loc n =
 
 let value_type _loc comps =
 	let ts = StringMap.fold (fun comp n l ->
-		let args = fold_range (fun acc _ -> <:ctyp< rvalue >>::acc) [] 1 (n+1) in
+		let args = fold_range (fun acc _ -> <:ctyp< $lid:type_name$ >>::acc) [] 1 (n+1) in
 		(ctyp_of_cons _loc (comp_name comp) args)::l
-	) comps [] in
-	<:str_item< type rvalue = [ $list:ts$ ] >>
+	) comps [ <:ctyp< $uid:int_name$ of int >> ] in
+	<:str_item< type $lid:type_name$ = [ $list:ts$ ] >>
 ;;
 
 let list_repr _loc = <:str_item<
-value rec list_of_rvalue = fun
-	[ Nil -> []
-	| Cons a b -> [ a :: list_of_rvalue b ]
+value rec $lid:list_of_name$ = fun
+	[ $uid:comp_name nil_name$ -> []
+	| $uid:comp_name cons_name$ a b -> [ a :: $lid:list_of_name$ b ]
 	| _ -> raise $uid:notalist_name$ ]
 >> ;;
 
@@ -112,16 +128,16 @@ let value_repr _loc comps =
 		let args = fold_range (fun acc i -> (pred_var_name i)::acc) [] 1 (n+1) in
 		let patt = patt_of_cons _loc (comp_name comp) (List.map (lid_patt _loc) args)
 		and expr = match concat_expr ~sep:"," _loc (List.map (fun a ->
-			<:expr< string_of_rvalue $lid:a$ >>
+			<:expr< $lid:string_of_name$ $lid:a$ >>
 		) args) with
 		| None -> <:expr< $str:comp$ >>
 		| Some e -> <:expr< $str:comp ^ "("$ ^ $e$ ^ ")" >>
 		in
 		<:match_case< $patt$ -> $expr$ >> ::l
-	) comps [] in
-	<:str_item< value rec string_of_rvalue v =
+	) comps [ <:match_case< $uid:int_name$ i -> string_of_int i >> ] in
+	<:str_item< value rec $lid:string_of_name$ v =
 	try
-		"[" ^ String.concat "," (List.map string_of_rvalue (list_of_rvalue v)) ^ "]"
+		"[" ^ String.concat "," (List.map $lid:string_of_name$ ($lid:list_of_name$ v)) ^ "]"
 	with [ $uid:notalist_name$ -> match v with [ $list:cases$ ] ] >>
 ;;
 
@@ -130,6 +146,7 @@ let value_repr _loc comps =
 let empty = StringMap.empty ;;
 
 let rec bound map = function
+	| Integer (_,_) -> true
 	| Var (v,_loc) -> StringMap.mem v map
 	| Comp (_,ts,_) -> List.for_all (bound map) ts
 	| Anon _loc -> false
@@ -186,6 +203,7 @@ exception UnboundVar of string * Loc.t;;
 let rec goal_out_comp env c ts _loc =
 	expr_of_cons _loc (comp_name c) (goal_outs env ts)
 and goal_out env = function
+	| Integer (i, _loc) -> int_expr _loc i
 	| Comp (c, ts, _loc) -> goal_out_comp env c ts _loc
 	| Var (v, _loc) ->
 		(try lid_expr _loc (lookup env v)
@@ -198,6 +216,7 @@ let rec patt_of_comp env c t cn ts _loc =
 	let env,c,t,in_p = patts_of_ts env c t ts in
 	env, c, t, (patt_of_cons _loc (comp_name cn) in_p)	 
 and patt_of_t env c t = function
+	| Integer (i,_loc) -> env, c, t, int_patt _loc i
 	| Comp (cn,ts,_loc) -> patt_of_comp env c t cn ts _loc
 	| Var (v,_loc) ->
 		let id = pred_var_name c and c = c + 1 in
@@ -215,6 +234,8 @@ and patts_of_ts env c t ts =
 (** Visit terms of a goal, update env and tests **)
 let terms _loc env c t1 =
 	let env,c,ep,t = List.fold_left (fun (env,c,ep,t) -> function
+		| Integer (i, _loc), id ->
+			env, c, (lid_expr _loc id, int_patt _loc i)::ep, t
 		| Comp (cn, ts, _loc), id ->
 			let env,c,t,in_p = patts_of_ts env c t ts in
 			env, c, (lid_expr _loc id, patt_of_cons _loc (comp_name cn) in_p)::ep, t
@@ -229,6 +250,9 @@ let terms _loc env c t1 =
 exception OpenUnify of Loc.t;;
 
 let rec unify _loc (env,c,tep,tst,a) = function
+	| Integer (i,_), Integer (i',_) ->
+		if i = i' then env, c, tep, tst, a
+		else env, c, tep, tst, true
 	| Comp (cn,ts,_), Comp (cn',ts',_) ->
 		if cn = cn' && List.length ts = List.length ts' then
 			List.fold_left (fun (env,c,tep,tst,a) ->
@@ -236,6 +260,8 @@ let rec unify _loc (env,c,tep,tst,a) = function
 				(* unify _loc (env,c,tep,tst,a) *)
 			) (env,c,tep,tst,a) (List.combine ts ts')
 		else env, c, tep, tst, true
+	| Integer (_,_), Comp (_,_,_) | Comp (_,_,_), Integer (_,_) ->
+		env, c, tep, tst, true
 	| Var (v,_locv), Var (v',_) ->
 		(match (binding env v, binding env v') with
 		| Some id, Some id' -> env, c, tep, (id,id')::tst, a
@@ -243,8 +269,15 @@ let rec unify _loc (env,c,tep,tst,a) = function
 		| None, Some id -> StringMap.add v id env, c, tep, tst, a
 		| None, None -> raise (OpenUnify _loc))
 	| Anon _, _ | _, Anon _ -> env, c, tep, tst, a
+	| Var (v,_locv), Integer (i,_loci) | Integer (i,_loci), Var (v,_locv) ->
+		(match binding env v with
+		| Some id -> env, c, (lid_expr _locv id, int_patt _loci i)::tep, tst, a
+		| None ->
+			let te = int_expr _loci i in
+			let id = pred_var_name c and c = c + 1 in
+			(StringMap.add v id env), c, (te,lid_patt _locv id)::tep, tst, a)
 	| Var (v,_locv), Comp (cn,ts,_locc) | Comp (cn,ts,_locc), Var (v,_locv) ->
-		match binding env v with
+		(match binding env v with
 		| Some id ->
 			let env,c,tst,tp = patt_of_comp env c tst cn ts _locc in
 			env, c, (lid_expr _locv id,tp)::tep, tst, a
@@ -252,8 +285,8 @@ let rec unify _loc (env,c,tep,tst,a) = function
 		(try
 			let te = goal_out_comp env cn ts _locc in
 			let id = pred_var_name c and c = c + 1 in
-			(StringMap.add v id env), c, (te,lid_patt _loc id)::tep, tst, a
-		with UnboundVar _ -> raise (OpenUnify _loc))
+			(StringMap.add v id env), c, (te,lid_patt _locv id)::tep, tst, a
+		with UnboundVar _ -> raise (OpenUnify _loc)))
 ;;
 
 (** Visit goals of a rule **)
@@ -341,8 +374,8 @@ let pred _loc (name,n) rs ms = versions_fold (fun a v ->
 
 let prog_statics _loc (prog : 'a prog) =
 	let statics = statics prog in
-	let statics = StringMap.add "nil" 0 statics in
-	let statics = StringMap.add "cons" 2 statics in
+	let statics = StringMap.add nil_name 0 statics in
+	let statics = StringMap.add cons_name 2 statics in
 	[value_type _loc statics;
 	excep_decl _loc notalist_name;
 	list_repr _loc;
