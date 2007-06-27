@@ -84,12 +84,14 @@ let f_name = "_f" ;;
 
 let found_name = "Found" ;;
 let notalist_name = "Not_a_list" ;;
+let notanint_name = "Not_an_int" ;;
 let type_name = "plval" ;;
 let int_name = "Int" ;;
 let cons_name = "cons" ;;
 let nil_name = "nil" ;;
 
 let list_of_name = "list_of_" ^ type_name ;;
+let int_of_name = "int_of_" ^ type_name ;;
 let string_of_name = "string_of_" ^ type_name ;;
 
 (** Aux **)
@@ -121,6 +123,12 @@ value rec $lid:list_of_name$ = fun
 	[ $uid:comp_name nil_name$ -> []
 	| $uid:comp_name cons_name$ a b -> [ a :: $lid:list_of_name$ b ]
 	| _ -> raise $uid:notalist_name$ ]
+>> ;;
+
+let int_repr _loc = <:str_item<
+value $lid:int_of_name$ = fun
+	[ $uid:int_name$ i -> i
+	| _ -> raise $uid:notanint_name$ ]
 >> ;;
 
 let value_repr _loc comps =
@@ -327,11 +335,49 @@ let same_goal _loc (env,c,f) pos t t' =
 		else (fun body -> f (apply_test _loc tst <:expr< () >> body))
 ;;
 
+let int_expr_of_term env = function
+	| Integer (i,_loc) -> <:expr< $int:string_of_int i$ >>
+	| Comp (_,_,_loc) -> Loc.raise _loc (Failure "Functions unsupported")
+	| Anon _loc -> raise (UnboundVar ("_",_loc))
+	| Var (v,_loc) ->
+		try
+			let id = lookup env v in
+			<:expr< $lid:int_of_name$ $lid_expr _loc id$ >>
+		with Not_found -> raise (UnboundVar (v,_loc))
+;;
+
+let rec int_expr_of_expr env = function
+| Add (e1,e2,_loc) ->
+	let e1 = int_expr_of_expr env e1 and e2 = int_expr_of_expr env e2 in
+	<:expr< $e1$ + $e2$ >>
+| Sub (e1,e2,_loc) ->
+	let e1 = int_expr_of_expr env e1 and e2 = int_expr_of_expr env e2 in
+	<:expr< $e1$ - $e2$ >>
+| Term t -> int_expr_of_term env t
+;;
+
+let eq_goal _loc (env,c,f) pos e1 e2 =
+	let e1 = int_expr_of_expr env e1 and e2 = int_expr_of_expr env e2 in
+	env, c,
+		if pos then (fun body -> f <:expr< if $e1$ = $e2$ then $body$ else () >>)
+		else (fun body -> f <:expr< if $e1$ <> $e2$ then $body$ else () >>)
+;;
+
+let is_goal _loc (env,c,f) t e =
+	let e = <:expr< $uid:int_name$ $int_expr_of_expr env e$ >> in
+	let (env, c, tst, p) = patt_of_t env c [] t in
+	let tst = expand_tests _loc [(e,p)] tst false in
+	env, c, (fun body -> f (apply_test _loc tst body <:expr< () >>))
+;;
+
 let egoal acc = function
 	| Pos (g,_loc) -> goal acc true g
 	| Neg (g,_loc) -> goal acc false g
 	| Same (t,t',_loc) -> same_goal _loc acc true t t'
 	| Diff (t,t',_loc) -> same_goal _loc acc false t t'
+	| Eq (e,e',_loc) -> eq_goal _loc acc true e e'
+	| NotEq (e,e',_loc) -> eq_goal _loc acc false e e'
+	| Is (t,e,_loc) -> is_goal _loc acc t e
 ;;
 
 (** Visit rules of a predicate version **)
@@ -380,6 +426,8 @@ let prog_statics _loc (prog : 'a prog) =
 	excep_decl _loc notalist_name;
 	list_repr _loc;
 	value_repr _loc statics;
+	excep_decl _loc notanint_name;
+	int_repr _loc;
 	excep_decl _loc found_name]
 ;;
 

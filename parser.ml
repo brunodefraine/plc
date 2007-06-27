@@ -6,7 +6,8 @@ let rule = Gram.Entry.mk "rule" ;;
 let ext_goal = Gram.Entry.mk "ext_goal" ;;
 let goal = Gram.Entry.mk "goal" ;;
 let term = Gram.Entry.mk "term" ;;
-let mask = Gram.Entry.mk "mask";
+let expr = Gram.Entry.mk "expr" ;;
+let mask = Gram.Entry.mk "mask" ;;
 
 type rule_or_mask =
 	  Rule of Loc.t goal * Loc.t ext_goal list * Loc.t
@@ -38,7 +39,7 @@ let term_list _loc ts e =
 ;;
 
 EXTEND Gram
-GLOBAL: prog rule ext_goal goal term mask;
+GLOBAL: prog rule ext_goal goal term expr mask;
 
 prog:
 	[ [ rd = LIST0 rule_or_mask ->
@@ -78,6 +79,14 @@ ext_goal:
 		| x = other_term; "="; y = term -> Same (x,y,_loc)
 		| (x,t,l) = ident_args; "\\="; y = term -> Diff (term_lid (x,t,l),y,_loc)
 		| x = other_term; "\\="; y = term -> Diff (x,y,_loc)
+		| (x,t,l) = ident_args; "is"; y = expr -> Is (term_lid (x,t,l),y,_loc)
+		| x = other_term; "is"; y = expr -> Is (x,y,_loc)
+		| (x,t,l) = ident_args; "=:="; y = expr -> Eq (Term (term_lid (x,t,l)),y,_loc)
+		| x = other_term; "=:="; y = expr -> Eq (Term x,y,_loc)
+		| "("; x = expr; ")"; "=:="; y = expr -> Eq (x,y,_loc)
+		| (x,t,l) = ident_args; "=\\="; y = expr -> NotEq (Term (term_lid (x,t,l)),y,_loc)
+		| x = other_term; "=\\="; y = expr -> NotEq (Term x,y,_loc)
+		| "("; x = expr; ")"; "=\\="; y = expr -> NotEq (x,y,_loc) 
 		| (x,t,l) = ident_args -> Pos (goal_lid (x,t,l),_loc) ]
 	];
 
@@ -104,6 +113,15 @@ other_term:
 		[ x = UIDENT -> Var (x,_loc)
 		| x = INT -> Integer (int_of_string x,_loc)
 		| "["; t = LIST0 term SEP ","; e = OPT [ "|"; t = term -> t ]; "]" -> term_list _loc t e ]
+	];
+
+expr:
+	[ "add" LEFTA
+		[ x = expr; "+"; y = expr -> Add(x,y,_loc)
+		| x = expr; "-"; y = expr -> Sub(x,y,_loc)]
+	| "simple" NONA
+		[ t = term -> Term t
+		| "("; e = expr ;")" -> e ]
 	];
 
 mask:
