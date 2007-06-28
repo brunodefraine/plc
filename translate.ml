@@ -356,11 +356,19 @@ let rec int_expr_of_expr env = function
 | Term t -> int_expr_of_term env t
 ;;
 
-let eq_goal _loc (env,c,f) pos e1 e2 =
+let relation_lid = function
+	| EQ -> "="
+	| NE -> "<>"
+	| LT -> "<"
+	| GT -> ">"
+	| GTE -> ">="
+	| LTE -> "<="
+;;
+
+let relation_goal _loc (env,c,f) r e1 e2 =
 	let e1 = int_expr_of_expr env e1 and e2 = int_expr_of_expr env e2 in
-	env, c,
-		if pos then (fun body -> f <:expr< if $e1$ = $e2$ then $body$ else () >>)
-		else (fun body -> f <:expr< if $e1$ <> $e2$ then $body$ else () >>)
+	let tst = <:expr< $lid:relation_lid r$ $e1$ $e2$ >> in
+	env, c, (fun body -> f <:expr< if $tst$ then $body$ else () >>)
 ;;
 
 let is_goal _loc (env,c,f) t e =
@@ -375,8 +383,7 @@ let egoal acc = function
 	| Neg (g,_loc) -> goal acc false g
 	| Same (t,t',_loc) -> same_goal _loc acc true t t'
 	| Diff (t,t',_loc) -> same_goal _loc acc false t t'
-	| Eq (e,e',_loc) -> eq_goal _loc acc true e e'
-	| NotEq (e,e',_loc) -> eq_goal _loc acc false e e'
+	| Relation (r,e,e',_loc) -> relation_goal _loc acc r e e'
 	| Is (t,e,_loc) -> is_goal _loc acc t e
 ;;
 

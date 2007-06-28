@@ -18,6 +18,11 @@ OCAMLFLAGS=-dtypes $(INCLUDES) $(PPFLAGS)
 demo: demo.cmo demo_driver.ml
 	$(OCAML) demo.cmo demo_driver.ml
 
+nqueens_driver.cmo: nqueens.cmo
+nqueens_driver.cmx: nqueens.cmx
+nqueens.opt: nqueens.cmx nqueens_driver.cmx
+	$(OCAMLOPT) -o $@ $+
+
 .PHONY: demo
 
 # Dependencies

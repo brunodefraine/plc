@@ -30,14 +30,15 @@ type 'loc expr =
 	| Term of 'loc term
 ;;
 
+type relation = EQ | NE | LT | GT | LTE | GTE ;;
+
 type 'loc ext_goal =
 	| Pos of 'loc goal * 'loc
 	| Neg of 'loc goal * 'loc
 	| Same of 'loc term * 'loc term * 'loc
 	| Diff of 'loc term * 'loc term * 'loc
 	| Is of 'loc term * 'loc expr * 'loc
-	| Eq of 'loc expr * 'loc expr * 'loc	
-	| NotEq of 'loc expr * 'loc expr * 'loc
+	| Relation of relation * 'loc expr * 'loc expr * 'loc
 ;;
 
 (* e.g. for sibling/2: (X,Y) :- parent(Z,X), parent(Z,Y). *)
@@ -84,7 +85,7 @@ let statics (prog : 'a prog) = PredMap.fold (fun pred (rules,_) acc ->
 				statics_of_terms acc [t1; t2]
 			| Is (t1,e1,_) ->
 				statics_of_expr (statics_of_terms acc [t1]) e1
-			| Eq (e1,e2,_) | NotEq (e1,e2,_) ->
+			| Relation (_,e1,e2,_) ->
 				statics_of_expr (statics_of_expr acc e1) e2
 		) acc egoals
 	) acc rules
