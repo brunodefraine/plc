@@ -33,19 +33,31 @@ type 'loc mask = 'loc arg_mask list * 'loc ;;
 (* Complete program: map from pred to rule list + mask list *)
 type 'loc prog = ('loc rule list * 'loc mask list) PredMap.t ;;
 
-let rec statics_of_terms ?(l0 = true) acc terms =
+let rec statics_of_terms acc terms =
 	List.fold_left (fun comps -> function
 		| Comp (c,ts,_) ->
 			let comps =
-				if l0 then
-					let n = List.length ts in
-					try
-						let n' = StringMap.find c comps in
-						if n = n' then comps
-						else failwith ("Contradictory arities for " ^ c)
-					with Not_found -> StringMap.add c n comps
-				else comps
+				let n = List.length ts in
+				try
+					let n' = StringMap.find c comps in
+					if n = n' then comps
+					else failwith ("Contradictory arities for " ^ c)
+				with Not_found -> StringMap.add c n comps
 			in
+			statics_of_terms comps ts
+		| _ -> comps
+	) acc terms
+;;
+
+let rec statics_of_goal_terms acc terms =
+	List.fold_left (fun comps -> function
+		| Comp ("is",[t;_],_loc) -> statics_of_terms comps [t]
+		| Comp ("eq",[_;_],_loc) | Comp ("ne",[_;_],_loc)
+		| Comp ("lt",[_;_],_loc) | Comp ("lte",[_;_],_loc)
+		| Comp ("gt",[_;_],_loc) | Comp ("gte",[_;_],_loc) -> comps
+		| Comp ("not",([t] as ts),_loc) -> statics_of_goal_terms comps ts
+		| Comp (c,ts,_) ->
+			(* same and diff will also match here *)
 			statics_of_terms comps ts
 		| _ -> comps
 	) acc terms
@@ -53,6 +65,6 @@ let rec statics_of_terms ?(l0 = true) acc terms =
 
 let statics (prog : 'a prog) = PredMap.fold (fun pred (rules,_) acc ->
 	List.fold_left (fun acc (terms,goals,_) ->
-		statics_of_terms ~l0:false (statics_of_terms acc terms) goals
+		statics_of_goal_terms (statics_of_terms acc terms) goals
 	) acc rules
 ) prog StringMap.empty ;;

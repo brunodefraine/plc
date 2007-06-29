@@ -89,6 +89,8 @@ let type_name = "plval" ;;
 let int_name = "Int" ;;
 let cons_name = "cons" ;;
 let nil_name = "nil" ;;
+let add_name = "add" ;;
+let sub_name = "sub" ;;
 
 let list_of_name = "list_of_" ^ type_name ;;
 let int_of_name = "int_of_" ^ type_name ;;
@@ -106,6 +108,11 @@ let int_patt _loc i =
 
 (** Atom/statics translation **)
 
+let comps_contains comps n i =
+	try StringMap.find n comps = i
+	with Not_found -> false
+;;
+
 let excep_decl _loc n =
 	<:str_item< exception $uid:n$ >>
 ;;
@@ -118,18 +125,27 @@ let value_type _loc comps =
 	<:str_item< type $lid:type_name$ = [ $list:ts$ ] >>
 ;;
 
-let list_repr _loc = <:str_item<
-value rec $lid:list_of_name$ = fun
-	[ $uid:comp_name nil_name$ -> []
-	| $uid:comp_name cons_name$ a b -> [ a :: $lid:list_of_name$ b ]
-	| _ -> raise $uid:notalist_name$ ]
->> ;;
+let list_repr _loc comps =
+	let cases = [ <:match_case< _ -> raise $uid:notalist_name$ >> ] in
+	let cases = if not (comps_contains comps nil_name 0) then cases else
+		<:match_case< $uid:comp_name nil_name$ -> [] >> :: cases in
+	let cases = if not (comps_contains comps cons_name 2) then cases else
+		<:match_case< $uid:comp_name cons_name$ a b ->
+			[ a :: $lid:list_of_name$ b ] >> :: cases in
+	<:str_item< value rec $lid:list_of_name$ = fun [ $list:cases$ ] >>
+;;
 
-let int_repr _loc = <:str_item<
-value $lid:int_of_name$ = fun
-	[ $uid:int_name$ i -> i
-	| _ -> raise $uid:notanint_name$ ]
->> ;;
+let int_repr _loc comps =	
+	let cases = [ <:match_case< _ -> raise $uid:notanint_name$ >> ] in
+	let cases = if not (comps_contains comps sub_name 2) then cases else
+		<:match_case< $uid:comp_name sub_name$ x y ->
+			($lid:int_of_name$ x) - ($lid:int_of_name$ y) >> :: cases in
+	let cases = if not (comps_contains comps add_name 2) then cases else
+		<:match_case< $uid:comp_name add_name$ x y ->
+			($lid:int_of_name$ x) + ($lid:int_of_name$ y) >> :: cases in
+	let cases = <:match_case< $uid:int_name$ i -> i >> :: cases in
+	<:str_item< value rec $lid:int_of_name$ = fun [ $list:cases$ ] >>
+;;
 
 let value_repr _loc comps =
 	let cases = StringMap.fold (fun comp n l ->
@@ -419,14 +435,12 @@ let pred _loc (name,n) rs ms = versions_fold (fun a v ->
 
 let prog_statics _loc (prog : 'a prog) =
 	let statics = statics prog in
-	let statics = StringMap.add nil_name 0 statics in
-	let statics = StringMap.add cons_name 2 statics in
 	[value_type _loc statics;
 	excep_decl _loc notalist_name;
-	list_repr _loc;
+	list_repr _loc statics;
 	value_repr _loc statics;
 	excep_decl _loc notanint_name;
-	int_repr _loc;
+	int_repr _loc statics;
 	excep_decl _loc found_name]
 ;;
 
