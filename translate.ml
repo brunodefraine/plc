@@ -298,15 +298,12 @@ let rec unify _loc (env,c,tep,tst,a) = function
 ;;
 
 (** Visit goals of a rule **)
-let goal (env,c,f) pos ((n,_),ts,_loc) =
+let pred_goal _loc (env,c,f) n ts =
 	let v = version_reconstruct (List.rev_map (fun t -> not (bound env t)) ts) in
 	let call = lid_expr _loc (pred_name n v) in
 	let c,ev = extend_version c (version_neg v) in
 	let ins = goal_ins _loc ev and t1,t2 = recombine_terms ts ev in
-	let env, c, tst =
-		let env', c', tst' = terms _loc env c t1 in
-		if pos then env', c', tst' else env, c, tst'
-	in
+	let env, c, tst = terms _loc env c t1 in
 	let outs =
 		try goal_outs env t2
 		(* we select a version with only bound vars *)
@@ -316,16 +313,12 @@ let goal (env,c,f) pos ((n,_),ts,_loc) =
 		| Maybe (_,_,_) ->
 			warning _loc "will unify after satisfying goal, might not match Prolog semantics"
 		| _ -> ());
-		env, c,
-		if pos then (fun body -> f (wrap _loc call ins outs tst body))
-		else
-			let nbody = wrap _loc call ins outs tst <:expr< raise $uid:found_name$ >> in
-			(fun body -> f (safe_catch _loc nbody body found_name))
+		env, c, (fun body -> f (wrap _loc call ins outs tst body))
 	end
 ;;	
 
 let same_goal _loc (env,c,f) pos t t' =
-	let env, c, tst =
+	let env, 	c, tst =
 		let env', c', tep', tst', a' = unify _loc (env,c,[],[],false) (t,t') in
 		let tst' = expand_tests _loc tep' tst' a' in
 		if pos then env', c', tst' else env, c, tst'
@@ -335,9 +328,15 @@ let same_goal _loc (env,c,f) pos t t' =
 		else (fun body -> f (apply_test _loc tst <:expr< () >> body))
 ;;
 
-let int_expr_of_term env = function
+let rec int_expr_of_term env = function
 	| Integer (i,_loc) -> <:expr< $int:string_of_int i$ >>
-	| Comp (_,_,_loc) -> Loc.raise _loc (Failure "Functions unsupported")
+	| Comp ("add",[e1;e2],_loc) ->
+		let e1 = int_expr_of_term env e1 and e2 = int_expr_of_term env e2 in
+		<:expr< $e1$ + $e2$ >>
+	| Comp ("sub",[e1;e2],_loc) ->
+		let e1 = int_expr_of_term env e1 and e2 = int_expr_of_term env e2 in
+		<:expr< $e1$ - $e2$ >>
+	| Comp (n,_,_loc) -> Loc.raise _loc (Failure ("Function " ^ n ^ " not supported"))
 	| Anon _loc -> raise (UnboundVar ("_",_loc))
 	| Var (v,_loc) ->
 		try
@@ -346,52 +345,45 @@ let int_expr_of_term env = function
 		with Not_found -> raise (UnboundVar (v,_loc))
 ;;
 
-let rec int_expr_of_expr env = function
-| Add (e1,e2,_loc) ->
-	let e1 = int_expr_of_expr env e1 and e2 = int_expr_of_expr env e2 in
-	<:expr< $e1$ + $e2$ >>
-| Sub (e1,e2,_loc) ->
-	let e1 = int_expr_of_expr env e1 and e2 = int_expr_of_expr env e2 in
-	<:expr< $e1$ - $e2$ >>
-| Term t -> int_expr_of_term env t
-;;
-
-let relation_lid = function
-	| EQ -> "="
-	| NE -> "<>"
-	| LT -> "<"
-	| GT -> ">"
-	| GTE -> ">="
-	| LTE -> "<="
-;;
-
-let relation_goal _loc (env,c,f) r e1 e2 =
-	let e1 = int_expr_of_expr env e1 and e2 = int_expr_of_expr env e2 in
-	let tst = <:expr< $lid:relation_lid r$ $e1$ $e2$ >> in
+let relation_goal _loc (env,c,f) r t1 t2 =
+	let e1 = int_expr_of_term env t1 and e2 = int_expr_of_term env t2 in
+	let tst = <:expr< $lid:r$ $e1$ $e2$ >> in
 	env, c, (fun body -> f <:expr< if $tst$ then $body$ else () >>)
 ;;
 
-let is_goal _loc (env,c,f) t e =
-	let e = <:expr< $uid:int_name$ $int_expr_of_expr env e$ >> in
+let is_goal _loc (env,c,f) t t' =
+	let e = <:expr< $uid:int_name$ $int_expr_of_term env t'$ >> in
 	let (env, c, tst, p) = patt_of_t env c [] t in
 	let tst = expand_tests _loc [(e,p)] tst false in
 	env, c, (fun body -> f (apply_test _loc tst body <:expr< () >>))
 ;;
 
-let egoal acc = function
-	| Pos (g,_loc) -> goal acc true g
-	| Neg (g,_loc) -> goal acc false g
-	| Same (t,t',_loc) -> same_goal _loc acc true t t'
-	| Diff (t,t',_loc) -> same_goal _loc acc false t t'
-	| Relation (r,e,e',_loc) -> relation_goal _loc acc r e e'
-	| Is (t,e,_loc) -> is_goal _loc acc t e
+let rec goal acc = function
+	| Integer (_,_loc) -> Loc.raise _loc (Failure ("Integer not callable"))
+	| Var (_,_loc) | Anon _loc ->
+		Loc.raise _loc (Failure ("Meta-call not supported"))
+	| Comp ("same",[t;t'],_loc) -> same_goal _loc acc true t t'
+	| Comp ("diff",[t;t'],_loc) -> same_goal _loc acc false t t'
+	| Comp ("is",[t;t'],_loc) -> is_goal _loc acc t t'
+	| Comp ("eq",[t;t'],_loc) -> relation_goal _loc acc "=" t t'
+	| Comp ("ne",[t;t'],_loc) -> relation_goal _loc acc "<>" t t'
+	| Comp ("lt",[t;t'],_loc) -> relation_goal _loc acc "<" t t'
+	| Comp ("lte",[t;t'],_loc) -> relation_goal _loc acc "<=" t t'
+	| Comp ("gt",[t;t'],_loc) -> relation_goal _loc acc ">" t t'
+	| Comp ("gte",[t;t'],_loc) -> relation_goal _loc acc ">=" t t'
+	| Comp ("not",[t],_loc) -> not_goal _loc acc t
+	| Comp (n,ts,_loc) -> pred_goal _loc acc n ts
+and not_goal _loc (env,c,f) g =
+	let (_,_,notf) = goal (env,c,(fun body -> body)) g in
+	let nbody = notf <:expr< raise $uid:found_name$ >> in
+	env, c, (fun body -> safe_catch _loc nbody body found_name)
 ;;
 
 (** Visit rules of a predicate version **)
-let rule ev c ((ts,egoals,_loc):'a rule) =
+let rule ev c ((ts,goals,_loc):'a rule) =
 	let t1,t2 = recombine_terms ts ev in
 	let env,c,tst = terms _loc empty c t1 in
-	let env,c,f = List.fold_left egoal (env,c,(fun body -> body)) egoals in
+	let env,c,f = List.fold_left goal (env,c,(fun body -> body)) goals in
 	let outs = goal_outs env t2 in
 	let body = fun_apply _loc (lid_expr _loc f_name) outs in
 	let body = f body in
