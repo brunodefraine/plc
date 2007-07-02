@@ -78,6 +78,7 @@ term:
 			| ("_",Some _) -> Loc.raise _loc (Failure "Anonymous with arguments")
 			| (x,None) -> Comp (x,[],_loc)
 			| (x,Some t) -> Comp (x,t,_loc))
+		| "!" -> Comp ("cut",[],_loc)
 		| x = UIDENT -> Var (x,_loc)
 		| x = INT -> Integer (int_of_string x, _loc)
 		| "("; t = term; ")" -> t

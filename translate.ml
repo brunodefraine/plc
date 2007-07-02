@@ -83,6 +83,7 @@ let pred_var_name n = "_arg" ^ (string_of_int n) ;;
 let f_name = "_f" ;;
 
 let found_name = "Found" ;;
+let cut_name = "Cut" ;;
 let notalist_name = "Not_a_list" ;;
 let notanint_name = "Not_an_int" ;;
 let type_name = "plval" ;;
@@ -92,6 +93,8 @@ let nil_name = "nil" ;;
 let add_name = "add" ;;
 let sub_name = "sub" ;;
 
+let cut_id_name = "_cutid" ;;
+let my_cut_id_name = "_mycutid" ;;
 let list_of_name = "list_of_" ^ type_name ;;
 let int_of_name = "int_of_" ^ type_name ;;
 let string_of_name = "string_of_" ^ type_name ;;
@@ -163,6 +166,14 @@ let value_repr _loc comps =
 	try
 		"[" ^ String.concat "," (List.map $lid:string_of_name$ ($lid:list_of_name$ v)) ^ "]"
 	with [ $uid:notalist_name$ -> match v with [ $list:cases$ ] ] >>
+;;
+
+let cut_excep_decl _loc = 
+	<:str_item< exception $uid:cut_name$ of int >>
+;;
+
+let cut_id_decl _loc =
+	<:str_item< value $lid:cut_id_name$ = ref 0 >>
 ;;
 
 (** Env management **)
@@ -374,6 +385,10 @@ let is_goal _loc (env,c,f) t t' =
 	env, c, (fun body -> f (apply_test _loc tst body <:expr< () >>))
 ;;
 
+let cut_goal _loc (env,c,f) =
+	env, c, (fun body -> f <:expr< do { $body$; raise ($uid:cut_name$ $lid:my_cut_id_name$) } >>)
+;;
+
 let rec goal acc = function
 	| Integer (_,_loc) -> Loc.raise _loc (Failure ("Integer not callable"))
 	| Var (_,_loc) | Anon _loc ->
@@ -388,6 +403,7 @@ let rec goal acc = function
 	| Comp ("gt",[t;t'],_loc) -> relation_goal _loc acc ">" t t'
 	| Comp ("gte",[t;t'],_loc) -> relation_goal _loc acc ">=" t t'
 	| Comp ("not",[t],_loc) -> not_goal _loc acc t
+	| Comp ("cut",[],_loc) -> cut_goal _loc acc
 	| Comp (n,ts,_loc) -> pred_goal _loc acc n ts
 and not_goal _loc (env,c,f) g =
 	let (_,_,notf) = goal (env,c,(fun body -> body)) g in
@@ -406,13 +422,27 @@ let rule ev c ((ts,goals,_loc):'a rule) =
 	apply_test _loc tst body <:expr< () >>
 ;;
 
+let rule_has_cut (_,goals,_) =
+	List.exists (function
+		| Comp ("cut",[],_) -> true
+		| _ -> false
+	) goals
+;;
+
 (** Visit a predicate to produce a certain version **)
 let pred_version _loc n rs v =
 	let name = lid_patt _loc (pred_name n v) in
 	let c,ev = extend_version 0 v in
 	let args = goal_ins _loc ev in
-	let rs = List.map (rule ev c) rs in
+	let rs = List.map (rule ev c) rs and has_cut = List.exists rule_has_cut rs in
 	let body = sequence _loc rs in
+	let body = if not has_cut then body else
+	<:expr<
+	 	let $lid:my_cut_id_name$ = do { incr $lid:cut_id_name$; ! $lid:cut_id_name$ } in
+		try do { $body$; decr $lid:cut_id_name$ } with
+		[ $uid:cut_name$ id when id = $lid:my_cut_id_name$ -> decr $lid:cut_id_name$
+		| e -> do { decr $lid:cut_id_name$; raise e } ]
+	>> in
 	let f = fun_args _loc ((lid_patt _loc f_name)::args) body in
 	<:binding< $name$ = $f$ >>
 ;;
@@ -441,7 +471,9 @@ let prog_statics _loc (prog : 'a prog) =
 	value_repr _loc statics;
 	excep_decl _loc notanint_name;
 	int_repr _loc statics;
-	excep_decl _loc found_name]
+	excep_decl _loc found_name;
+	cut_excep_decl _loc;
+	cut_id_decl _loc]
 ;;
 
 let prog_rules _loc (prog : 'a prog) =
