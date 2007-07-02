@@ -102,6 +102,13 @@ let cut_id_decl _loc =
 	<:str_item< value $lid:Names.cut_id$ = ref 0 >>
 ;;
 
+let cut_rule_body _loc body = <:expr<
+	let $lid:Names.my_cut_id$ = do { incr $lid:Names.cut_id$; ! $lid:Names.cut_id$ } in
+	try do { $body$; decr $lid:Names.cut_id$ } with
+	[ $uid:Names.cut_exc$ id when id = $lid:Names.my_cut_id$ -> decr $lid:Names.cut_id$
+	| e -> do { decr $lid:Names.cut_id$; raise e } ]
+>> ;;
+
 (** Env **)
 
 let rec bound env = function
@@ -336,13 +343,7 @@ let pred_version _loc n rs v =
 	let args = goal_ins _loc ev in
 	let rs = List.map (rule ev env) rs and has_cut = List.exists rule_has_cut rs in
 	let body = sequence _loc rs in
-	let body = if not has_cut then body else
-	<:expr<
-	 	let $lid:Names.my_cut_id$ = do { incr $lid:Names.cut_id$; ! $lid:Names.cut_id$ } in
-		try do { $body$; decr $lid:Names.cut_id$ } with
-		[ $uid:Names.cut_exc$ id when id = $lid:Names.my_cut_id$ -> decr $lid:Names.cut_id$
-		| e -> do { decr $lid:Names.cut_id$; raise e } ]
-	>> in
+	let body = if not has_cut then body else cut_rule_body _loc body in
 	let f = fun_args _loc ((lid_patt _loc Names.f)::args) body in
 	<:binding< $name$ = $f$ >>
 ;;
