@@ -315,7 +315,7 @@ let rec goal acc = function
 and not_goal _loc (env,f) g =
 	let (_,notf) = goal (env,(fun body -> body)) g in
 	let nbody = notf <:expr< raise $uid:Names.found_exc$ >> in
-	env, (fun body -> safe_catch _loc nbody body Names.found_exc)
+	env, (fun body -> f (safe_catch _loc nbody body Names.found_exc))
 ;;
 
 (** Visit rules of a predicate version **)
