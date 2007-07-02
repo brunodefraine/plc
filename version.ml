@@ -1,0 +1,47 @@
+
+let string_init n f =
+	let s = String.create n in
+	begin
+		for i = 0 to n-1 do
+			s.[i] <- f i
+		done;
+		s
+	end
+;;
+
+(** Implementation of open/closed versions using integers and bit operations **)
+
+type t = int * int ;;
+
+let make f acc k =
+	let n = 1 lsl k in
+	let rec aux acc i =
+		if i = n then acc else aux (f acc (i,k)) (i+1)
+	in
+	aux acc 0
+;;
+
+let opened (i,k) j =
+	(i lsr j) land 1 = 1
+;;
+
+let reconstruct bs =
+	List.fold_left (fun (o,k) b ->
+		(let o = o lsl 1 in if b then o + 1 else o), k+1
+	) (0,0) bs
+;;
+
+let fold f acc (i,k) =
+	let rec aux acc j =
+		if j = k then acc else aux (f acc (opened (i,k) j)) (j+1)
+	in
+	aux acc 0
+;;
+
+let to_string (i,k) =
+	string_init k (fun j -> if opened (i,k) j then 'o' else 'c')
+;;
+
+let neg (i,k) =
+	(1 lsl k) - 1 - i, k
+;;

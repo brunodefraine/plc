@@ -18,10 +18,10 @@ let list_of_list_option = function
 
 let term_list _loc ts e =
 	List.fold_right (fun t c ->
-		Comp ("cons",[t;c],_loc)
+		Comp (Names.cons,[t;c],_loc)
 	) ts (match e with
 	| Some t -> t
-	| None -> Comp ("nil",[],_loc))
+	| None -> Comp (Names.nil,[],_loc))
 ;;
 
 EXTEND Gram
@@ -59,18 +59,18 @@ args:
 
 term:
 	[ "relop" NONA
-		[ x = term; "="; y = term -> Comp ("same",[x;y],_loc)
-		| x = term; "\\="; y = term -> Comp ("diff",[x;y],_loc)
-		| x = term; "is"; y = term -> Comp ("is",[x;y],_loc)
-		| x = term; "=:="; y = term -> Comp ("eq",[x;y],_loc)
-		| x = term; "=\\="; y = term -> Comp ("ne",[x;y],_loc)
-		| x = term; "<"; y = term -> Comp ("lt",[x;y],_loc)
-		| x = term; "=<"; y = term -> Comp ("lte",[x;y],_loc)
-		| x = term; ">"; y = term -> Comp ("gt",[x;y],_loc)
-		| x = term; ">="; y = term -> Comp ("gte",[x;y],_loc) ]
+		[ x = term; "="; y = term -> Comp (Names.same,[x;y],_loc)
+		| x = term; "\\="; y = term -> Comp (Names.diff,[x;y],_loc)
+		| x = term; "is"; y = term -> Comp (Names.is,[x;y],_loc)
+		| x = term; "=:="; y = term -> Comp (Names.eq,[x;y],_loc)
+		| x = term; "=\\="; y = term -> Comp (Names.ne,[x;y],_loc)
+		| x = term; "<"; y = term -> Comp (Names.lt,[x;y],_loc)
+		| x = term; "=<"; y = term -> Comp (Names.lte,[x;y],_loc)
+		| x = term; ">"; y = term -> Comp (Names.gt,[x;y],_loc)
+		| x = term; ">="; y = term -> Comp (Names.gte,[x;y],_loc) ]
 	| "add" LEFTA
-		[ x = term; "+"; y = term -> Comp ("add",[x;y],_loc)
-		| x = term; "-"; y = term -> Comp ("sub",[x;y],_loc) ]
+		[ x = term; "+"; y = term -> Comp (Names.add,[x;y],_loc)
+		| x = term; "-"; y = term -> Comp (Names.sub,[x;y],_loc) ]
 	| "simple" NONA
 		[ x = LIDENT; t = OPT args ->
 			(match (x,t) with
@@ -78,7 +78,7 @@ term:
 			| ("_",Some _) -> Loc.raise _loc (Failure "Anonymous with arguments")
 			| (x,None) -> Comp (x,[],_loc)
 			| (x,Some t) -> Comp (x,t,_loc))
-		| "!" -> Comp ("cut",[],_loc)
+		| "!" -> Comp (Names.cut,[],_loc)
 		| x = UIDENT -> Var (x,_loc)
 		| x = INT -> Integer (int_of_string x, _loc)
 		| "("; t = term; ")" -> t

@@ -30,19 +30,29 @@ nqueens.opt: nqueens.cmx nqueens_driver.cmx
 ast.cmo ast.cmx: override INCLUDES=
 ast.cmo ast.cmx: override PAS=
 ast.cmo ast.cmx: override PRS=
+version.cmi version.cmo version.cmx: override INCLUDES=
+version.cmi version.cmo version.cmx: override PAS=
+version.cmi version.cmo version.cmx: override PRS=
+version.cmo: version.cmi
+version.cmx: version.cmi
+names.cmo names.cmx: override INCLUDES=
+names.cmo names.cmx: override PAS=
+names.cmo names.cmx: override PRS=
+names.cmo: version.cmo
+names.cmx: version.cmx
 parser.cmo parser.cmx: override INCLUDES+=-I +camlp4
 parser.cmo parser.cmx: override PAS=$(P4O) $(P4GRAM)
 parser.cmo parser.cmx: override PRS=$(P4DUMP)
-parser.cmo: ast.cmo
-parser.cmx: ast.cmx
+parser.cmo: ast.cmo names.cmo
+parser.cmx: ast.cmx names.cmx
 mlgen.cmo mlgen.cmx: override INCLUDES+=-I +camlp4
 mlgen.cmo mlgen.cmx: override PAS=$(P4O) $(P4QUOT)
 mlgen.cmo mlgen.cmx: override PRS=$(P4DUMP)
 translate.cmo translate.cmx: override INCLUDES+=-I +camlp4
 translate.cmo translate.cmx: override PAS=$(P4O) $(P4QUOT)
 translate.cmo translate.cmx: override PRS=$(P4DUMP)
-translate.cmo: ast.cmo mlgen.cmo
-translate.cmx: ast.cmx mlgen.cmx
+translate.cmo: ast.cmo names.cmo mlgen.cmo version.cmo
+translate.cmx: ast.cmx names.cmx mlgen.cmx version.cmx
 fe.cmo fe.cmx: override INCLUDES+=-I +camlp4
 fe.cmo fe.cmx: override PAS=$(P4O) $(P4GRAM)
 fe.cmo fe.cmx: override PRS=$(P4DUMP)
@@ -51,13 +61,16 @@ fe.cmx: parser.cmx translate.cmx ast.cmx
 
 # Rules
 
+%.cmi: %.mli
+	$(OCAMLC) -c $(OCAMLFLAGS) $<
+
 %.cmo %.cmi: %.ml
 	$(OCAMLC) -c $(OCAMLFLAGS) $<
 
 %.cmx %.cmi: %.ml
 	$(OCAMLOPT) -c $(OCAMLFLAGS) $<
 
-plc.opt: ast.cmx mlgen.cmx translate.cmx parser.cmx fe.cmx
+plc.opt: ast.cmx version.cmx names.cmx mlgen.cmx translate.cmx parser.cmx fe.cmx
 	$(OCAMLOPT) -o $@ -I +camlp4 camlp4lib.cmxa $+ unix.cmxa Camlp4Printers/Camlp4$(P4AUTO).cmx Camlp4Bin.cmx
 	strip $@
 
