@@ -102,32 +102,13 @@ let cut_id_decl _loc =
 	<:str_item< value $lid:Names.cut_id$ = ref 0 >>
 ;;
 
-(** Env management **)
+(** Env **)
 
-let empty = StringMap.empty ;;
-
-let rec bound map = function
+let rec bound env = function
 	| Integer (_,_) -> true
-	| Var (v,_loc) -> StringMap.mem v map
-	| Comp (_,ts,_) -> List.for_all (bound map) ts
+	| Var (v,_loc) -> Env.bound env v
+	| Comp (_,ts,_) -> List.for_all (bound env) ts
 	| Anon _loc -> false
-;;
-
-let lookup map v =
-	StringMap.find v map
-;;
-
-let binding map v =
-	try
-		Some (lookup map v)
-	with Not_found -> None
-;;
-
-let bind_or_test map tsts v id =
-	try
-		let id' = lookup map v in
-		map, (id,id')::tsts
-	with Not_found -> StringMap.add v id map, tsts
 ;;
 
 (**
@@ -136,11 +117,12 @@ let bind_or_test map tsts v id =
 **)
 
 (** Decorate a version with identifiers for the closed arguments **)
-let extend_version c v =
-	let c,ev = Version.fold (fun (c,ev) o ->
-		if not o then c+1, (Some (Names.pred_var c))::ev else c, None::ev
-	) (c,[]) v
-	in c,List.rev ev
+let extend_version env v =
+	let env,ev = Version.fold (fun (env,ev) o ->
+		if o then env, None::ev
+		else let env, id = Env.fresh_id env in env, (Some id)::ev
+	) (env,[]) v
+	in env, List.rev ev
 ;;
 
 (** Split terms according to closed (by id) and open **)
@@ -167,96 +149,86 @@ and goal_out env = function
 	| Integer (i, _loc) -> int_expr _loc i
 	| Comp (c, ts, _loc) -> goal_out_comp env c ts _loc
 	| Var (v, _loc) ->
-		(try lid_expr _loc (lookup env v)
+		(try lid_expr _loc (Env.lookup env v)
 		with Not_found -> raise (UnboundVar (v,_loc)))
 	| Anon _loc -> raise (UnboundVar ("_",_loc))
 and	goal_outs env t2 = List.map (goal_out env) t2 ;;
 
 (** Create patterns from a list of terms, meanwhile update env,c,t **)
-let rec patt_of_comp env c t cn ts _loc =
-	let env,c,t,in_p = patts_of_ts env c t ts in
-	env, c, t, (patt_of_cons _loc (Names.comp cn) in_p)	 
-and patt_of_t env c t = function
-	| Integer (i,_loc) -> env, c, t, int_patt _loc i
-	| Comp (cn,ts,_loc) -> patt_of_comp env c t cn ts _loc
+let rec patt_of_comp env t cn ts _loc =
+	let env,t,in_p = patts_of_ts env t ts in
+	env, t, (patt_of_cons _loc (Names.comp cn) in_p)	 
+and patt_of_t env t = function
+	| Integer (i,_loc) -> env, t, int_patt _loc i
+	| Comp (cn,ts,_loc) -> patt_of_comp env t cn ts _loc
 	| Var (v,_loc) ->
-		let id = Names.pred_var c and c = c + 1 in
-		let env,t = bind_or_test env t v id in
-		env, c, t, (lid_patt _loc id)
-	| Anon _loc -> env, c, t, <:patt< _ >>
-and patts_of_ts env c t ts =
-	let env,c,t,p = List.fold_left (fun (env,c,t,p) term ->
-		let env,c,t,patt = patt_of_t env c t term in
-		env,c,t,(patt::p)
-	) (env,c,t,[]) ts in
-	env, c, t, List.rev p
+		let env, t, id = Env.gen_bind_or_test env t v in
+		env, t, (lid_patt _loc id)
+	| Anon _loc -> env, t, <:patt< _ >>
+and patts_of_ts env t ts =
+	let env,t,p = List.fold_left (fun (env,t,p) term ->
+		let env,t,patt = patt_of_t env t term in
+		env,t,(patt::p)
+	) (env,t,[]) ts in
+	env, t, List.rev p
 ;;
 
 (** Visit terms of a goal, update env and tests **)
-let terms _loc env c t1 =
-	let env,c,ep,t = List.fold_left (fun (env,c,ep,t) -> function
+let terms _loc env t1 =
+	let env,ep,t = List.fold_left (fun (env,ep,t) -> function
 		| Integer (i, _loc), id ->
-			env, c, (lid_expr _loc id, int_patt _loc i)::ep, t
+			env, (lid_expr _loc id, int_patt _loc i)::ep, t
 		| Comp (cn, ts, _loc), id ->
-			let env,c,t,in_p = patts_of_ts env c t ts in
-			env, c, (lid_expr _loc id, patt_of_cons _loc (Names.comp cn) in_p)::ep, t
+			let env,t,p = patt_of_comp env t cn ts _loc in
+			env, (lid_expr _loc id, p)::ep, t
 		| Var (v, _loc), id ->
-			let env,t = bind_or_test env t v id in
-			env, c, ep, t
-		| Anon _loc, _ -> env, c, ep, t
-	) (env,c,[],[]) t1 in
-	env, c, expand_tests _loc ep t false
+			let env,t = Env.bind_or_test env t v id in
+			env, ep, t
+		| Anon _loc, _ -> env, ep, t
+	) (env,[],[]) t1 in
+	env, expand_tests _loc ep t false
 ;;
 
 exception OpenUnify of Loc.t;;
 
-let rec unify _loc (env,c,tep,tst,a) = function
+let rec unify _loc (env,tep,tst,a) = function
 	| Integer (i,_), Integer (i',_) ->
-		if i = i' then env, c, tep, tst, a
-		else env, c, tep, tst, true
+		if i = i' then env, tep, tst, a
+		else env, tep, tst, true
 	| Comp (cn,ts,_), Comp (cn',ts',_) ->
 		if cn = cn' && List.length ts = List.length ts' then
-			List.fold_left (fun (env,c,tep,tst,a) ->
-				Loc.raise _loc (Failure "Deep compound-to-compound unification unsupported")
-				(* unify _loc (env,c,tep,tst,a) *)
-			) (env,c,tep,tst,a) (List.combine ts ts')
-		else env, c, tep, tst, true
+			(* List.fold_left (unify _loc) (env,tep,tst,a) (List.combine ts ts')
+			Unfortunately not valid, since unifications have to be parallel *)
+			(if ts = [] then env, tep, tst, a else
+				Loc.raise _loc (Failure "Deep compound-to-compound unification unsupported"))	
+		else env, tep, tst, true
 	| Integer (_,_), Comp (_,_,_) | Comp (_,_,_), Integer (_,_) ->
-		env, c, tep, tst, true
-	| Var (v,_locv), Var (v',_) ->
-		(match (binding env v, binding env v') with
-		| Some id, Some id' -> env, c, tep, (id,id')::tst, a
-		| Some id, None -> StringMap.add v' id env, c, tep, tst, a
-		| None, Some id -> StringMap.add v id env, c, tep, tst, a
-		| None, None -> raise (OpenUnify _loc))
-	| Anon _, _ | _, Anon _ -> env, c, tep, tst, a
+		env, tep, tst, true
+	| Var (v,_), Var (v',_) ->
+		(try let env, tst = Env.unify env tst v v' in env, tep, tst, a
+		with Not_found -> raise (OpenUnify _loc))
+	| Anon _, _ | _, Anon _ -> env, tep, tst, a
 	| Var (v,_locv), Integer (i,_loci) | Integer (i,_loci), Var (v,_locv) ->
-		(match binding env v with
-		| Some id -> env, c, (lid_expr _locv id, int_patt _loci i)::tep, tst, a
-		| None ->
-			let te = int_expr _loci i in
-			let id = Names.pred_var c and c = c + 1 in
-			(StringMap.add v id env), c, (te,lid_patt _locv id)::tep, tst, a)
+		Env.dispatch env v (fun id -> (* existing id *)
+			env, (lid_expr _locv id, int_patt _loci i)::tep, tst, a
+		) (fun env id -> (* fresh id *)
+			env, (int_expr _loc i, lid_patt _locv id)::tep, tst, a)
 	| Var (v,_locv), Comp (cn,ts,_locc) | Comp (cn,ts,_locc), Var (v,_locv) ->
-		(match binding env v with
-		| Some id ->
-			let env,c,tst,tp = patt_of_comp env c tst cn ts _locc in
-			env, c, (lid_expr _locv id,tp)::tep, tst, a
-		| None ->
-		(try
-			let te = goal_out_comp env cn ts _locc in
-			let id = Names.pred_var c and c = c + 1 in
-			(StringMap.add v id env), c, (te,lid_patt _locv id)::tep, tst, a
-		with UnboundVar _ -> raise (OpenUnify _loc)))
+		Env.dispatch env v (fun id -> (* existing id *)
+			let env,tst,tp = patt_of_comp env tst cn ts _locc in
+			env, (lid_expr _locv id,tp)::tep, tst, a
+		) (fun env id -> (* fresh id *)
+			try env, (goal_out_comp env cn ts _locc, lid_patt _locv id)::tep, tst, a
+			with UnboundVar _ -> raise (OpenUnify _loc))
 ;;
 
 (** Visit goals of a rule **)
-let pred_goal _loc (env,c,f) n ts =
+let pred_goal _loc (env,f) n ts =
 	let v = Version.reconstruct (List.rev_map (fun t -> not (bound env t)) ts) in
 	let call = lid_expr _loc (Names.pred n v) in
-	let c,ev = extend_version c (Version.neg v) in
+	let env,ev = extend_version env (Version.neg v) in
 	let ins = goal_ins _loc ev and t1,t2 = recombine_terms ts ev in
-	let env, c, tst = terms _loc env c t1 in
+	let env, tst = terms _loc env t1 in
 	let outs =
 		try goal_outs env t2
 		(* we select a version with only bound vars *)
@@ -266,19 +238,19 @@ let pred_goal _loc (env,c,f) n ts =
 		| Maybe (_,_,_) ->
 			warning _loc "will unify after satisfying goal, might not match Prolog semantics"
 		| _ -> ());
-		env, c, (fun body -> f (wrap _loc call ins outs tst body))
+		env, (fun body -> f (wrap _loc call ins outs tst body))
 	end
 ;;	
 
-let same_goal _loc (env,c,f) pos t t' =
-	let env, 	c, tst =
-		let env', c', tep', tst', a' = unify _loc (env,c,[],[],false) (t,t') in
+let same_goal _loc (env,f) pos t t' =
+	let env, tst =
+		let env', tep', tst', a' = unify _loc (env,[],[],false) (t,t') in
 		let tst' = expand_tests _loc tep' tst' a' in
-		if pos then env', c', tst' else env, c, tst'
+		if pos then env', tst' else env, tst'
 	in
-	env, c,
-		if pos then (fun body -> f (apply_test _loc tst body <:expr< () >>))
-		else (fun body -> f (apply_test _loc tst <:expr< () >> body))
+	env,
+		if pos then (fun body -> f (apply_test _loc tst body (unit_expr _loc)))
+		else (fun body -> f (apply_test _loc tst (unit_expr _loc) body))
 ;;
 
 let rec int_expr_of_term env = function
@@ -293,26 +265,26 @@ let rec int_expr_of_term env = function
 	| Anon _loc -> raise (UnboundVar ("_",_loc))
 	| Var (v,_loc) ->
 		try
-			let id = lookup env v in
+			let id = Env.lookup env v in
 			<:expr< $lid:Names.int_of$ $lid_expr _loc id$ >>
 		with Not_found -> raise (UnboundVar (v,_loc))
 ;;
 
-let relation_goal _loc (env,c,f) r t1 t2 =
+let relation_goal _loc (env,f) r t1 t2 =
 	let e1 = int_expr_of_term env t1 and e2 = int_expr_of_term env t2 in
 	let tst = <:expr< $lid:r$ $e1$ $e2$ >> in
-	env, c, (fun body -> f <:expr< if $tst$ then $body$ else () >>)
+	env, (fun body -> f <:expr< if $tst$ then $body$ else () >>)
 ;;
 
-let is_goal _loc (env,c,f) t t' =
+let is_goal _loc (env,f) t t' =
 	let e = <:expr< $uid:Names.int_cons$ $int_expr_of_term env t'$ >> in
-	let (env, c, tst, p) = patt_of_t env c [] t in
+	let (env, tst, p) = patt_of_t env [] t in
 	let tst = expand_tests _loc [(e,p)] tst false in
-	env, c, (fun body -> f (apply_test _loc tst body <:expr< () >>))
+	env, (fun body -> f (apply_test _loc tst body (unit_expr _loc)))
 ;;
 
-let cut_goal _loc (env,c,f) =
-	env, c, (fun body -> f <:expr<
+let cut_goal _loc (env,f) =
+	env, (fun body -> f <:expr<
 		do { $body$; raise ($uid:Names.cut_exc$ $lid:Names.my_cut_id$) }
 	>>)
 ;;
@@ -333,21 +305,21 @@ let rec goal acc = function
 	| Comp (n,[t],_loc) when n = Names.notp -> not_goal _loc acc t
 	| Comp (n,[],_loc) when n = Names.cut -> cut_goal _loc acc
 	| Comp (n,ts,_loc) -> pred_goal _loc acc n ts
-and not_goal _loc (env,c,f) g =
-	let (_,_,notf) = goal (env,c,(fun body -> body)) g in
+and not_goal _loc (env,f) g =
+	let (_,notf) = goal (env,(fun body -> body)) g in
 	let nbody = notf <:expr< raise $uid:Names.found_exc$ >> in
-	env, c, (fun body -> safe_catch _loc nbody body Names.found_exc)
+	env, (fun body -> safe_catch _loc nbody body Names.found_exc)
 ;;
 
 (** Visit rules of a predicate version **)
-let rule ev c ((ts,goals,_loc):'a rule) =
+let rule ev env ((ts,goals,_loc):'a rule) =
 	let t1,t2 = recombine_terms ts ev in
-	let env,c,tst = terms _loc empty c t1 in
-	let env,c,f = List.fold_left goal (env,c,(fun body -> body)) goals in
+	let env,tst = terms _loc env t1 in
+	let env,f = List.fold_left goal (env,(fun body -> body)) goals in
 	let outs = goal_outs env t2 in
 	let body = fun_apply _loc (lid_expr _loc Names.f) outs in
 	let body = f body in
-	apply_test _loc tst body <:expr< () >>
+	apply_test _loc tst body (unit_expr _loc)
 ;;
 
 let rule_has_cut (_,goals,_) =
@@ -360,9 +332,9 @@ let rule_has_cut (_,goals,_) =
 (** Visit a predicate to produce a certain version **)
 let pred_version _loc n rs v =
 	let name = lid_patt _loc (Names.pred n v) in
-	let c,ev = extend_version 0 v in
+	let env,ev = extend_version (Env.empty Names.pred_var) v in
 	let args = goal_ins _loc ev in
-	let rs = List.map (rule ev c) rs and has_cut = List.exists rule_has_cut rs in
+	let rs = List.map (rule ev env) rs and has_cut = List.exists rule_has_cut rs in
 	let body = sequence _loc rs in
 	let body = if not has_cut then body else
 	<:expr<

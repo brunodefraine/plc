@@ -29,6 +29,8 @@ let tuple_patt _loc = function
 	| p::ps -> <:patt< ($p$,$list:ps$) >>
 ;;
 
+let unit_expr _loc = <:expr< () >> ;;
+
 let ctyp_of_cons _loc n cs =
 	match cs with
 	| [] -> <:ctyp< $uid:n$ >>
