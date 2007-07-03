@@ -57,7 +57,7 @@ let rec statics_of_goal_terms acc terms =
 		| Comp ("gt",[_;_],_loc) | Comp ("gte",[_;_],_loc) -> comps
 		| Comp ("not",([t] as ts),_loc) -> statics_of_goal_terms comps ts
 		| Comp (c,ts,_) ->
-			(* same and diff and cut will also match here *)
+			(* same and diff, cut, true and fail, etc. will also match here *)
 			statics_of_terms comps ts
 		| _ -> comps
 	) acc terms

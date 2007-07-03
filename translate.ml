@@ -296,6 +296,25 @@ let cut_goal _loc (env,f) =
 	>>)
 ;;
 
+let true_fail_goal _loc (env,f) pos =
+	env, if pos then f else
+	let body = f (unit_expr _loc) in (fun _ -> body)
+;;
+
+let repeat_goal _loc (env,f) =
+	env, (fun body -> f <:expr< while True do { $body$ } >>)
+;;
+
+let write_goal _loc (env,f) t =
+	env, let e = goal_out env t in
+	let e = <:expr< print_string ($lid:Names.string_of$ $e$) >> in
+	(fun body -> f <:expr< do { $e$; $body$ } >>)
+;;
+
+let nl_goal _loc (env,f) = 
+	env, (fun body -> f <:expr< do { print_newline (); $body$ } >>)
+;;
+
 let rec goal acc = function
 	| Integer (_,_loc) -> Loc.raise _loc (Failure ("Integer not callable"))
 	| Var (_,_loc) | Anon _loc ->
@@ -311,6 +330,11 @@ let rec goal acc = function
 	| Comp (n,[t;t'],_loc) when n = Names.gte -> relation_goal _loc acc ">=" t t'
 	| Comp (n,[t],_loc) when n = Names.notp -> not_goal _loc acc t
 	| Comp (n,[],_loc) when n = Names.cut -> cut_goal _loc acc
+	| Comp (n,[],_loc) when n = Names.truep -> true_fail_goal _loc acc true
+	| Comp (n,[],_loc) when n = Names.fail -> true_fail_goal _loc acc false
+	| Comp (n,[],_loc) when n = Names.repeat -> repeat_goal _loc acc
+	| Comp (n,[t],_loc) when n = Names.write -> write_goal _loc acc t
+	| Comp (n,[],_loc) when n = Names.nl -> nl_goal _loc acc
 	| Comp (n,ts,_loc) -> pred_goal _loc acc n ts
 and not_goal _loc (env,f) g =
 	let (_,notf) = goal (env,(fun body -> body)) g in

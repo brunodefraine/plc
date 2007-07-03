@@ -14,13 +14,20 @@ let gt = "gt" and gte = "gte" ;;
 let notp = "not" ;;
 let cut = "cut" ;;
 
+let truep = "true" and fail = "fail" ;;
+let repeat = "repeat" ;;
+let write = "write" and nl = "nl" ;;
+
 let builtin_preds = [
 	(same,2); (diff,2);
 	(is,2);
 	(eq,2); (ne,2);
 	(lt,2); (lte,2);
 	(gt,2); (gte,2);
-	(notp,1); (cut,0)
+	(notp,1); (cut,0);
+	(truep,0); (fail,0);
+	(repeat,0);
+	(write,1); (nl,0)
 ] ;;
 
 (** Code generation names **)
