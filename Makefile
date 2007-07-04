@@ -25,10 +25,10 @@ nqueens.opt: nqueens.cmx nqueens_driver.cmx
 	$(OCAMLOPT) -o $@ $+
 
 nqueens.pl: nqueens.cpp
-	$(CPP) -P -o $@ $<
+	$(CPP) -P $< $@
 
 nqueens.m: nqueens.cpp
-	$(CPP) -DMERCURY -P -o $@ $<
+	$(CPP) -DMERCURY -P $< $@
 
 nqueens_mercury: nqueens.m
 	mmc --make nqueens_mercury
