@@ -21,7 +21,7 @@ nqueens(N,Board) :-
 :- pred range(int::in,int::in,list(int)::out) is det.
 range(M,N,L) :-
   O = ordering(M,N),
-  ( O = (<), M1 is M+1, range(M1,N,L)
+  ( O = (<), M1 = M+1, range(M1,N,L1), L = [M|L1]
   ; (O = (=) ; O = (>)), L = [N]).
 #else
 range(M,N,[M|L]) :- M < N, M1 is M+1, range(M1,N,L).

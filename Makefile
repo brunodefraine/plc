@@ -30,6 +30,9 @@ nqueens.pl: nqueens.cpp
 nqueens.m: nqueens.cpp
 	$(CPP) -DMERCURY -P -o $@ $<
 
+nqueens_mercury: nqueens.m
+	mmc --make nqueens_mercury
+
 .PHONY: demo
 
 # Dependencies
