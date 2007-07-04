@@ -14,6 +14,7 @@ PRS=
 PPS=$(foreach PA,$(PAS),-parser Camlp4$(PA)) $(foreach PR,$(PRS),-printer Camlp4$(PR))
 PPFLAGS=$(if $(strip $(PPS)),-pp '$(CAMLP4) $(PPS) -loc _loc')
 OCAMLFLAGS=-dtypes $(INCLUDES) $(PPFLAGS)
+CPP=cpp -C -traditional-cpp -x c
 
 demo: demo.cmo demo_driver.ml
 	$(OCAML) demo.cmo demo_driver.ml
@@ -22,6 +23,12 @@ nqueens_driver.cmo: nqueens.cmo
 nqueens_driver.cmx: nqueens.cmx
 nqueens.opt: nqueens.cmx nqueens_driver.cmx
 	$(OCAMLOPT) -o $@ $+
+
+nqueens.pl: nqueens.cpp
+	$(CPP) -P -o $@ $<
+
+nqueens.m: nqueens.cpp
+	$(CPP) -DMERCURY -P -o $@ $<
 
 .PHONY: demo
 
