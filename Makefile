@@ -14,7 +14,7 @@ PRS=
 PPS=$(foreach PA,$(PAS),-parser Camlp4$(PA)) $(foreach PR,$(PRS),-printer Camlp4$(PR))
 PPFLAGS=$(if $(strip $(PPS)),-pp '$(CAMLP4) $(PPS) -loc _loc')
 OCAMLFLAGS=-dtypes $(INCLUDES) $(PPFLAGS)
-CPP=cpp -C -traditional-cpp -x c
+CPP=cpp -C -traditional-cpp -xc
 
 demo: demo.cmo demo_driver.ml
 	$(OCAML) demo.cmo demo_driver.ml
