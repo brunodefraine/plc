@@ -1,0 +1,8 @@
+
+Written by Bruno De Fraine.
+
+plc is distributed under the same terms as the OCaml compiler: the Q Public License version 1.0 with a change to choice of law.
+
+The programs produced by plc and the backend OCaml compiler link against the OCaml standard library. This library is distributed under the terms of the GNU Library General Public License version 2.
+
+Please see the LICENSE included with the OCaml distribution for more information.
