@@ -20,7 +20,7 @@ There are three important aspects about the approach taken by plc:
 
 2. plc encodes Prolog's goal solving process as a depth-first search using continuation-passing style. This means that every predicate is implemented as a higher-order function that calls a given argument function with every encountered solution (in case there are no solutions, the argument function is never called). As such, the argument function represents a continuation for every encountered solution, and backtracking occurs implicitly, when the continuation is not called. A disjunction of two predicates is translated to the sequence of first calling the first predicate's function and then the second predicate's function, while a conjunction is translated to a call to the first predicate's function with the second predicate's function as a part of the continuation argument. To stop at the first solution or to "cut" the consideration of backtracking alternatives, an exception is raised.
 
-3. plc precompiles different predicates versions according to the possible state (open/closed respectively uninstantiated/instantiated respectively free/ground respectively out/in) of each argument. So there are in fact a number of higher-order functions that implement different versions of the same predicate. [Mercury apparently employs a very similar technique when it considers different "modes" for a predicate.] These functions have different signatures and each version is written with knowledge of each variable's state, so it can in turn call the specific versions of its subgoals, according to the state of the arguments. As such, variables are excluded as first-class values. This is perhaps the most debatable design choice: while most  programs do not require first-class variables and benefit from this optimization, some Prolog idioms rely on this feature (e.g. open/difference lists).
+3. plc precompiles different predicates versions according to the possible state (open/closed respectively uninstantiated/instantiated respectively free/ground respectively out/in) of each argument. So there are in fact a number of higher-order functions that implement different versions of the same predicate. [Mercury apparently employs a very similar technique when it considers different "modes" for a predicate.] These functions have different signatures and each version is written with knowledge of each variable's state, so it can in turn call the specific versions of its subgoals, according to the state of the arguments. As such, variables are excluded as first-class values. This is perhaps the most debatable design choice: while most programs do not require first-class variables and benefit from this optimization, some Prolog idioms rely on this feature (e.g. open/difference lists).
 
 DOWNLOAD / USAGE
 
@@ -36,7 +36,9 @@ PERFORMANCE
 
 To evaluate the performance of plc-compiled programs, I conducted a benchmark with a typical Prolog version of nqueens (what else) on a Debian/Linux (etch) machine with an Intel Pentium 4 (2.66GHz) processor and 1G RAM. plc employed OCaml 3.10.0, the other contenders were:
 - SWI-Prolog version 5.6.14 for i386 (from Debian unstable)
+- Ciao-Prolog 1.10 (ciaoc producing a standalone executable)
 - SICStus 4.0.1 (x86-linux-glibc2.3)
+- YAP version Yap-5.1.1
 - Mercury, version 0.13.1, configured for i686-pc-linux-gnu (default low-level C backend)
 
 I included Mercury after a suggestion by Markus Triska. Although the Mercury language is neither a subset nor a superset of Prolog, it's possible to convert most Prolog code to Mercury with minimal effort (see "nqueens.cpp" and "nqueens_mercury.m" to see exactly how much effort). Moreover, Mercury is a valid reference point since it seems to apply similar optimizations (and more), and it is situated in the same area of integrating ideas from logic programming and (statically-typed) functional programming. (Note that I had no prior experience with Mercury so I hope my adaptations are representative.)
@@ -46,7 +48,9 @@ Each approach was used to solve the nqueens problem of size 12, six times in a r
              execution time   speedup over swipl
                 avg  stddev          avg  stddev
 swipl       8457.46  177.32         1.00    0.02
+ciaoc       1585.30   42.82         5.34    0.14
 sicstus     1368.21   42.95         6.19    0.19
+yap          715.81    7.46        11.82    0.12
 mercury      270.76   25.81        31.49    3.19
 plc          281.45    0.78        30.05    0.08
 
