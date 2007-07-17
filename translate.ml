@@ -25,16 +25,6 @@ let version_matches_mask v (m,_) =
 	assert (m = []); s
 ;;
 
-(** Aux **)
-
-let int_expr _loc i =
-	<:expr< $uid:Names.int_cons$ $int:(string_of_int i)$ >>
-;;
-
-let int_patt _loc i =
-	<:patt< $uid:Names.int_cons$ $int:(string_of_int i)$ >>
-;;
-
 (** Atom/statics translation **)
 
 let comps_contains comps n i =
@@ -66,6 +56,9 @@ let list_repr _loc comps =
 
 let int_repr _loc comps =	
 	let cases = [ <:match_case< _ -> raise $uid:Names.notanint_exc$ >> ] in
+	let cases = if not (comps_contains comps Names.neg 1) then cases else
+		<:match_case< $uid:Names.comp Names.neg$ x ->
+			-($lid:Names.int_of$ x) >> :: cases in
 	let cases = if not (comps_contains comps Names.sub 2) then cases else
 		<:match_case< $uid:Names.comp Names.sub$ x y ->
 			($lid:Names.int_of$ x) - ($lid:Names.int_of$ y) >> :: cases in
@@ -118,34 +111,23 @@ let rec bound env = function
 	| Anon _loc -> false
 ;;
 
-(**
-	Rules translation:
-	pred -> pred_version -> rule (-> terms) -> goal -> terms
-**)
+(** Aux **)
 
-(** Decorate a version with identifiers for the closed arguments **)
-let extend_version env v =
-	let env,ev = Version.fold (fun (env,ev) o ->
-		if o then env, None::ev
-		else let env, id = Env.fresh_id env in env, (Some id)::ev
-	) (env,[]) v
-	in env, List.rev ev
+let int_expr _loc i =
+	<:expr< $uid:Names.int_cons$ $int:(string_of_int i)$ >>
 ;;
 
-(** Split terms according to closed (by id) and open **)
-let recombine_terms ts ev =
-	let t1,t2 = List.fold_left (fun (t1,t2) -> function
-		| (t,Some id) -> (t,id)::t1,t2
-		| (t,None) -> t1,t::t2
-	) ([],[]) (List.combine ts ev) in
-	List.rev t1, List.rev t2
+let int_patt _loc i =
+	<:patt< $uid:Names.int_cons$ $int:(string_of_int i)$ >>
 ;;
 
-(** Prepare patterns from extended version (identifiers) **)
-let goal_ins _loc ev = List.rev (List.fold_left (fun acc -> function
-	| Some id -> (lid_patt _loc id)::acc
-	| None -> acc
-) [] ev) ;;
+
+let arg_ids env v =
+	let env, ids = Version.fold (fun (env,ids) o ->
+		if o then env, ids
+		else let env, id = Env.fresh_id env in env, id::ids
+	) (env,[]) v in env, List.rev ids
+;;
 
 exception UnboundVar of string * Loc.t;;
 
@@ -178,22 +160,6 @@ and patts_of_ts env t ts =
 		env,t,(patt::p)
 	) (env,t,[]) ts in
 	env, t, List.rev p
-;;
-
-(** Visit terms of a goal, update env and tests **)
-let terms _loc env t1 =
-	let env,ep,t = List.fold_left (fun (env,ep,t) -> function
-		| Integer (i, _loc), id ->
-			env, (lid_expr _loc id, int_patt _loc i)::ep, t
-		| Comp (cn, ts, _loc), id ->
-			let env,t,p = patt_of_comp env t cn ts _loc in
-			env, (lid_expr _loc id, p)::ep, t
-		| Var (v, _loc), id ->
-			let env,t = Env.bind_or_test env t v id in
-			env, ep, t
-		| Anon _loc, _ -> env, ep, t
-	) (env,[],[]) t1 in
-	env, expand_tests _loc ep t false
 ;;
 
 exception OpenUnify of Loc.t;;
@@ -229,35 +195,50 @@ let rec unify _loc (env,tep,tst,a) = function
 			with UnboundVar _ -> raise (OpenUnify _loc))
 ;;
 
+(**
+	Rules translation:
+	pred -> pred_version -> rule (-> terms) -> goal -> terms
+**)
+
+let terms _loc env t1 =
+	let env, ps, t = List.fold_left (fun (env,ps,t) -> function
+		| Integer (i, _loc), _ ->
+			env, (int_patt _loc i)::ps, t
+		| Comp (cn, ts, _loc), _ ->
+			let env,t,p = patt_of_comp env t cn ts _loc in
+			env, p::ps, t
+		| Var (v, _loc), id ->
+			let env,t = Env.bind_or_test env t v id in
+			env, <:patt< _ >>::ps, t
+		| Anon _loc, _ -> env, <:patt< _ >>::ps, t
+	) (env,[],[]) t1 in
+	env, List.rev ps, test_expr _loc t
+;;
+
 (** Visit goals of a rule **)
 let pred_goal _loc (env,f) n ts =
 	let v = Version.reconstruct (List.rev_map (fun t -> not (bound env t)) ts) in
-	let call = lid_expr _loc (Names.pred n v) in
-	let env,ev = extend_version env (Version.neg v) in
-	let ins = goal_ins _loc ev and t1,t2 = recombine_terms ts ev in
-	let env, tst = terms _loc env t1 in
-	let outs =
+	let call = lid_expr _loc (Names.pred n v) and nv = Version.neg v in
+	let env,ids = arg_ids env nv and t1,t2 = Version.partition nv ts in
+	let ins = List.map (lid_patt _loc) ids and outs =
 		try goal_outs env t2
 		(* we select a version with only bound vars *)
 		with UnboundVar _ -> assert false
-	in begin
-		(match tst with
-		| Maybe (_,_,_) ->
-			warning _loc "will unify after satisfying goal, might not match Prolog semantics"
-		| _ -> ());
-		env, (fun body -> f (wrap _loc call ins outs tst body))
+	in
+	let es = List.map (lid_expr _loc) ids in
+	let env, ps, t = terms _loc env (List.combine t1 ids) in
+	begin
+		if t <> None || List.exists (function | <:patt< _ >> -> false | _ -> true) ps then
+			warning _loc "will unify after satisfying goal, might not match Prolog semantics";
+		env, (fun body -> f (wrap _loc call ins outs es ps t body))		
 	end
 ;;	
 
 let same_goal _loc (env,f) pos t t' =
-	let env, tst =
-		let env', tep', tst', a' = unify _loc (env,[],[],false) (t,t') in
-		let tst' = expand_tests _loc tep' tst' a' in
-		if pos then env', tst' else env, tst'
-	in
-	env,
-		if pos then (fun body -> f (apply_test _loc tst body (unit_expr _loc)))
-		else (fun body -> f (apply_test _loc tst (unit_expr _loc) body))
+	let env', tep, tst, a = unify _loc (env,[],[],false) (t,t') in
+	let tst = test_expr _loc tst and nbody = unit_expr _loc in
+	if pos then env', (fun body -> f (apply_test _loc tep tst a body nbody))
+	else env, (fun body -> f (apply_test _loc tep tst a nbody body))
 ;;
 
 let rec int_expr_of_term env = function
@@ -268,6 +249,8 @@ let rec int_expr_of_term env = function
 	| Comp (n,[e1;e2],_loc) when n = Names.sub ->
 		let e1 = int_expr_of_term env e1 and e2 = int_expr_of_term env e2 in
 		<:expr< $e1$ - $e2$ >>
+	| Comp (n,[e],_loc) when n = Names.neg ->
+		let e = int_expr_of_term env e in <:expr< - $e$ >>
 	| Comp (n,_,_loc) -> Loc.raise _loc (Failure ("Function " ^ n ^ " not supported"))
 	| Anon _loc -> raise (UnboundVar ("_",_loc))
 	| Var (v,_loc) ->
@@ -286,8 +269,8 @@ let relation_goal _loc (env,f) r t1 t2 =
 let is_goal _loc (env,f) t t' =
 	let e = <:expr< $uid:Names.int_cons$ $int_expr_of_term env t'$ >> in
 	let (env, tst, p) = patt_of_t env [] t in
-	let tst = expand_tests _loc [(e,p)] tst false in
-	env, (fun body -> f (apply_test _loc tst body (unit_expr _loc)))
+	let tst = test_expr _loc tst and nbody = unit_expr _loc in
+	env, (fun body -> f (single_match_expr _loc [e] [p] tst body nbody))
 ;;
 
 let cut_goal _loc (env,f) =
@@ -342,17 +325,6 @@ and not_goal _loc (env,f) g =
 	env, (fun body -> f (safe_catch _loc nbody body Names.found_exc))
 ;;
 
-(** Visit rules of a predicate version **)
-let rule ev env ((ts,goals,_loc):'a rule) =
-	let t1,t2 = recombine_terms ts ev in
-	let env,tst = terms _loc env t1 in
-	let env,f = List.fold_left goal (env,(fun body -> body)) goals in
-	let outs = goal_outs env t2 in
-	let body = fun_apply _loc (lid_expr _loc Names.f) outs in
-	let body = f body in
-	apply_test _loc tst body (unit_expr _loc)
-;;
-
 let rule_has_cut (_,goals,_) =
 	List.exists (function
 		| Comp (n,[],_) when n = Names.cut -> true
@@ -360,16 +332,84 @@ let rule_has_cut (_,goals,_) =
 	) goals
 ;;
 
+let rec equiv_t = function
+	| Integer (i,_), Integer (i',_) -> i = i'
+	| Comp (cn,ts,_), Comp (cn',ts',_) ->
+		cn = cn' && List.length ts = List.length ts' && equiv_ts ts ts'
+	| Var (v,_), Var (v',_) -> v = v'
+	| Anon _, Anon _ -> true
+	| _, _ -> false
+and equiv_ts ts ts' = List.for_all equiv_t (List.combine ts ts')
+;;
+
+let rec exclu_t = function
+	| Integer (i,_), Integer (i',_) -> i <> i'
+	| Comp (cn,ts,_), Comp (cn',ts',_) ->
+		cn <> cn' || List.length ts <> List.length ts' || exclu_ts ts ts'
+	| Comp (_,_,_), Integer (_,_) | Integer (_,_), Comp (_,_,_) -> true
+	| _, _ -> false
+and exclu_ts ts ts' = List.exists exclu_t (List.combine ts ts')
+;;
+
+let extend_exclus xs hd bodies = match xs with
+	| None -> [hd,bodies], []
+	| Some (xs,r) ->
+		if List.for_all (fun (hd',_) -> exclu_ts hd hd') xs
+		then (hd,bodies)::xs, r
+		else [hd,bodies], (List.rev xs)::r
+;;
+
+let extend_equivs qs hd body = match qs with
+	| None -> hd, [body], None
+	| Some (hd',bodies',xs) ->
+		if equiv_ts hd hd' then hd', body::bodies', xs
+		else hd, [body], Some (extend_exclus xs hd' (List.rev bodies'))
+;;
+
+let finish_equivs qs = match qs with
+	| None -> []
+	| Some (hd,bodies,xs) ->
+		let xs, r = extend_exclus xs hd (List.rev bodies) in
+		List.rev ((List.rev xs)::r)
+;;
+
+let group_rs v (rs:'a rule list) =
+	let qs = List.fold_left (fun qs (ts,goals,_loc) ->
+		let t1,t2 = Version.partition v ts in
+		Some (extend_equivs qs t1 (t2,goals,_loc))
+	) None rs in finish_equivs qs
+;;
+
+let rule_body env (t2,goals,_loc) =
+	let env,f = List.fold_left goal (env,(fun body -> body)) goals in
+	let outs = goal_outs env t2 in
+	let body = fun_apply _loc (lid_expr _loc Names.f) outs in
+	f body
+;;
+
+let rule_equiv _loc env ids (t1,bodies) =
+	let env,ps,t = terms _loc env (List.combine t1 ids) in
+	ps, t, sequence _loc (List.map (rule_body env) bodies)
+;;
+
+let rule_excl _loc ids env exclus =
+	let
+		exprs = List.map (lid_expr _loc) ids and
+		cases = List.map (rule_equiv _loc env ids) exclus
+	in
+	match_expr _loc exprs cases (unit_expr _loc)
+;;
+
 (** Visit a predicate to produce a certain version **)
-let pred_version _loc n rs v =
-	let name = lid_patt _loc (Names.pred n v) in
-	let env,ev = extend_version (Env.empty Names.pred_var) v in
-	let args = goal_ins _loc ev in
-	let rs = List.map (rule ev env) rs and has_cut = List.exists rule_has_cut rs in
-	let body = sequence _loc rs in
+let pred_version _loc name rs v =
+	let has_cut = List.exists rule_has_cut rs in
+	let rs = group_rs v rs in
+	let env,ids = arg_ids (Env.empty Names.pred_var) v in
+	let args_patt = List.map (lid_patt _loc) ids in
+	let body = sequence _loc (List.map (rule_excl _loc ids env) rs) in
 	let body = if not has_cut then body else cut_rule_body _loc body in
-	let f = fun_args _loc ((lid_patt _loc Names.f)::args) body in
-	<:binding< $name$ = $f$ >>
+	let f = fun_args _loc ((lid_patt _loc Names.f)::args_patt) body in
+	<:binding< $lid_patt _loc name$ = $f$ >>
 ;;
 
 let string_of_pred (name,n) = name ^ "/" ^ (string_of_int n) ;;
@@ -385,7 +425,7 @@ let pred _loc ((name,n) as p) rs ms =
 	else Version.make (fun a v ->
 	if ms = [] || List.exists (version_matches_mask v) ms then
 		let fname = Names.pred name v in
-		try (pred_version _loc name rs v)::a with
+		try (pred_version _loc fname rs v)::a with
 		| UnboundVar(var,_loc) ->
 			warning _loc (Printf.sprintf "skipping %s, unbound %s" fname var);
 			a

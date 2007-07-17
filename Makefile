@@ -19,6 +19,14 @@ CPP=cpp -C -traditional-cpp -xc
 demo: demo.cmo demo_driver.ml
 	$(OCAML) demo.cmo demo_driver.ml
 
+test_driver.cmo: tests.cmo
+test_driver: OCAMLFLAGS+=-g
+test_driver: tests.cmo test_driver.cmo
+	$(OCAMLC) $(OCAMLFLAGS) -o $@ $+
+
+test: test_driver
+	OCAMLRUNPARAM=b ./test_driver
+
 nqueens_driver.cmo: nqueens.cmo
 nqueens_driver.cmx: nqueens.cmx
 nqueens.opt: nqueens.cmx nqueens_driver.cmx
@@ -33,7 +41,7 @@ nqueens.m: nqueens.cpp
 nqueens_mercury: nqueens.m
 	mmc --make nqueens_mercury
 
-.PHONY: demo
+.PHONY: demo test
 
 # Dependencies
 

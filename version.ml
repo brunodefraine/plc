@@ -38,6 +38,15 @@ let fold f acc (i,k) =
 	aux acc 0
 ;;
 
+let partition v l =
+	let (l,cs,os) = fold (fun (l,cs,os) o -> match l with
+		| e::l -> if o then l,cs,e::os else l,e::cs,os 
+		| [] -> failwith "partition"
+	) (l,[],[]) v in
+	if l <> [] then failwith "partition"
+	else List.rev cs, List.rev os
+;;
+
 let to_string (i,k) =
 	string_init k (fun j -> if opened (i,k) j then 'o' else 'c')
 ;;

@@ -71,6 +71,9 @@ term:
 	| "add" LEFTA
 		[ x = term; "+"; y = term -> Comp (Names.add,[x;y],_loc)
 		| x = term; "-"; y = term -> Comp (Names.sub,[x;y],_loc) ]
+	| "unary minus" NONA
+		[ "-"; x = INT -> Integer (-(int_of_string x), _loc)
+		| "-"; x = term -> Comp (Names.neg,[x],_loc) ]
 	| "simple" NONA
 		[ x = LIDENT; t = OPT args ->
 			(match (x,t) with

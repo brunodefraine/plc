@@ -3,7 +3,7 @@
 (** Builtin predicates and compound constructors **)
 
 let nil = "nil" and cons = "cons";;
-let add = "add" and sub = "sub" ;;
+let add = "add" and sub = "sub" and neg = "neg" ;;
 
 let same = "same" and diff = "diff" ;;
 let is = "is" ;;

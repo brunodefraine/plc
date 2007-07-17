@@ -95,31 +95,45 @@ let test_expr _loc l =
 	| (a,b)::l -> Some (aux <:expr< $a$ = $b$ >> l)		
 ;;
 
-type ('e, 'p) test = Maybe of 'e * 'p * 'e option | Always | Never ;;
+let if_expr _loc t body nbody = match t with
+	| None -> body
+	| Some t -> <:expr< if $t$ then $body$ else $nbody$ >>
+;;
 
-let expand_tests _loc ep t abort =
-	if abort then Never
-	else if ep = [] && t = [] then Always
+let match_expr _loc es cases nbody =
+	match es, cases with
+	| es, [ ps, t, body ] ->
+		let eps = List.combine es ps in
+		let eps = List.filter (fun (e,p) -> match p with | <:patt< _ >> -> false | _ -> true) eps in
+		(match eps with
+		| [] -> if_expr _loc t body nbody
+		| _ ->
+			let es,ps = List.split eps in
+			(match t with
+			| None ->
+				if List.for_all (function | <:patt< $lid:_$ >> -> true | _ -> false) ps
+				then <:expr< let $tuple_patt _loc ps$ = $tuple_expr _loc es$ in $body$ >>	
+				else <:expr< match $tuple_expr _loc es$ with [ $tuple_patt _loc ps$ -> $body$ | _ -> $nbody$ ] >>
+			| Some t -> <:expr< match $tuple_expr _loc es$ with [ $tuple_patt _loc ps$ when $t$ -> $body$ | _ -> $nbody$ ] >> ))
+	| _ ->
+	let cases = List.map (fun (ps,t,body) -> match t with
+		| None -> <:match_case< $tuple_patt _loc ps$ -> $body$ >>
+		| Some t -> <:match_case< $tuple_patt _loc ps$ when $t$ -> $body$ >>
+	) cases in
+	<:expr< match $tuple_expr _loc es$ with [ $list:cases$ | _ -> $nbody$ ] >>
+;;
+
+let single_match_expr _loc es ps t body nbody = match_expr _loc es [ps,t,body] nbody ;;
+
+let apply_test _loc ep t abort pbody nbody =
+	if abort then nbody
 	else
-		let e,p = List.split ep in
-		Maybe (tuple_expr _loc e, tuple_patt _loc p, test_expr _loc t)
+		let es,ps = List.split ep in
+		single_match_expr _loc es ps t pbody nbody
 ;;
 
-let apply_test _loc tst pbody nbody = match tst with
-	| Maybe (e,p,None) ->
-		(match p with
-		| <:patt< $lid:_$ >> -> <:expr< let $p$ = $e$ in $pbody$ >>
-		| _ -> <:expr< match $e$ with [ $p$ -> $pbody$ | _ -> $nbody$ ] >>)
-	| Maybe (e,p,Some t) ->
-		(match (e,p) with
-		| <:expr< () >>, <:patt< () >> -> <:expr< if $t$ then $pbody$ else $nbody$ >>
-		| _ -> <:expr< match $e$ with [ $p$ when $t$ -> $pbody$ | _ -> $nbody$ ] >>)
-	| Always -> pbody
-	| Never -> nbody
-;;
-
-let wrap _loc call ins outs tst body =
-	let body = apply_test _loc tst body <:expr< () >> in
+let wrap _loc call ins outs es ps t body =
+	let body = single_match_expr _loc es ps t body (unit_expr _loc) in
 	let body = fun_args _loc ins body in
 	fun_apply _loc call (body::outs)
 ;;
