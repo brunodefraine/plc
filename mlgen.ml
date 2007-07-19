@@ -100,18 +100,41 @@ let if_expr _loc t body nbody = match t with
 	| Some t -> <:expr< if $t$ then $body$ else $nbody$ >>
 ;;
 
+let is_any_patt = function
+| <:patt< _ >> -> true
+| _ -> false
+;;
+
+let is_always_patt = function
+| <:patt< $lid:_$ >> -> true
+| _ -> false
+;;
+
+let remove_skip l skip = List.rev (
+	List.fold_left2 (fun l e s -> if s then l else e::l) [] l skip
+) ;;
+
+let filter_matches es cases =
+	let skip = List.fold_left (fun skip _ -> true::skip) [] es in
+	let skip = List.fold_left (fun skip (ps,_,_) ->
+		List.rev (List.fold_left2 (fun skip p s ->
+			(s && is_any_patt p)::skip
+		) [] ps skip)
+	) skip cases in
+	(remove_skip es skip,
+	List.map (fun (ps,t,body) -> (remove_skip ps skip,t,body)) cases)
+;;
+
 let match_expr _loc es cases nbody =
+	let es, cases = filter_matches es cases in
 	match es, cases with
 	| es, [ ps, t, body ] ->
-		let eps = List.combine es ps in
-		let eps = List.filter (fun (e,p) -> match p with | <:patt< _ >> -> false | _ -> true) eps in
-		(match eps with
+		(match es with
 		| [] -> if_expr _loc t body nbody
 		| _ ->
-			let es,ps = List.split eps in
 			(match t with
 			| None ->
-				if List.for_all (function | <:patt< $lid:_$ >> -> true | _ -> false) ps
+				if List.for_all is_always_patt ps
 				then <:expr< let $tuple_patt _loc ps$ = $tuple_expr _loc es$ in $body$ >>	
 				else <:expr< match $tuple_expr _loc es$ with [ $tuple_patt _loc ps$ -> $body$ | _ -> $nbody$ ] >>
 			| Some t -> <:expr< match $tuple_expr _loc es$ with [ $tuple_patt _loc ps$ when $t$ -> $body$ | _ -> $nbody$ ] >> ))
