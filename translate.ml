@@ -121,6 +121,64 @@ let int_patt _loc i =
 	<:patt< $uid:Names.int_cons$ $int:(string_of_int i)$ >>
 ;;
 
+(** Rule grouping **)
+
+let rec equiv_t = function
+	| Integer (i,_), Integer (i',_) -> i = i'
+	| Comp (cn,ts,_), Comp (cn',ts',_) ->
+		cn = cn' && List.length ts = List.length ts' && equiv_ts ts ts'
+	| Var (v,_), Var (v',_) -> v = v'
+	| Anon _, Anon _ -> true
+	| _, _ -> false
+and equiv_ts ts ts' = List.for_all equiv_t (List.combine ts ts')
+;;
+
+let rec exclu_t = function
+	| Integer (i,_), Integer (i',_) -> i <> i'
+	| Comp (cn,ts,_), Comp (cn',ts',_) ->
+		cn <> cn' || List.length ts <> List.length ts' || exclu_ts ts ts'
+	| Comp (_,_,_), Integer (_,_) | Integer (_,_), Comp (_,_,_) -> true
+	| _, _ -> false
+and exclu_ts ts ts' = List.exists exclu_t (List.combine ts ts')
+;;
+
+let extend_exclus xs hd bodies = match xs with
+	| None -> [hd,bodies], []
+	| Some (xs,r) ->
+		if List.for_all (fun (hd',_) -> exclu_ts hd hd') xs
+		then (hd,bodies)::xs, r
+		else [hd,bodies], (List.rev xs)::r
+;;
+
+let extend_equivs qs hd body = match qs with
+	| None -> hd, [body], None
+	| Some (hd',bodies',xs) ->
+		if equiv_ts hd hd' then hd', body::bodies', xs
+		else hd, [body], Some (extend_exclus xs hd' (List.rev bodies'))
+;;
+
+let finish_equivs qs = match qs with
+	| None -> []
+	| Some (hd,bodies,xs) ->
+		let xs, r = extend_exclus xs hd (List.rev bodies) in
+		List.rev ((List.rev xs)::r)
+;;
+
+let group_rs v (rs:'a rule list) =
+	let qs = List.fold_left (fun qs (ts,goals,_loc) ->
+		let t1,t2 = Version.partition v ts in
+		Some (extend_equivs qs t1 (t2,goals,_loc))
+	) None rs in finish_equivs qs
+;;
+
+let nogroup_rs v (rs:'a rule list) =
+	List.map (fun (ts,goals,_loc) ->
+		let t1,t2 = Version.partition v ts in
+		[t1, [t2, goals, _loc]]
+	) rs
+;;
+
+(** Translation aux **)
 
 let arg_ids env v =
 	let env, ids = Version.fold (fun (env,ids) o ->
@@ -332,54 +390,6 @@ let rule_has_cut (_,goals,_) =
 	) goals
 ;;
 
-let rec equiv_t = function
-	| Integer (i,_), Integer (i',_) -> i = i'
-	| Comp (cn,ts,_), Comp (cn',ts',_) ->
-		cn = cn' && List.length ts = List.length ts' && equiv_ts ts ts'
-	| Var (v,_), Var (v',_) -> v = v'
-	| Anon _, Anon _ -> true
-	| _, _ -> false
-and equiv_ts ts ts' = List.for_all equiv_t (List.combine ts ts')
-;;
-
-let rec exclu_t = function
-	| Integer (i,_), Integer (i',_) -> i <> i'
-	| Comp (cn,ts,_), Comp (cn',ts',_) ->
-		cn <> cn' || List.length ts <> List.length ts' || exclu_ts ts ts'
-	| Comp (_,_,_), Integer (_,_) | Integer (_,_), Comp (_,_,_) -> true
-	| _, _ -> false
-and exclu_ts ts ts' = List.exists exclu_t (List.combine ts ts')
-;;
-
-let extend_exclus xs hd bodies = match xs with
-	| None -> [hd,bodies], []
-	| Some (xs,r) ->
-		if List.for_all (fun (hd',_) -> exclu_ts hd hd') xs
-		then (hd,bodies)::xs, r
-		else [hd,bodies], (List.rev xs)::r
-;;
-
-let extend_equivs qs hd body = match qs with
-	| None -> hd, [body], None
-	| Some (hd',bodies',xs) ->
-		if equiv_ts hd hd' then hd', body::bodies', xs
-		else hd, [body], Some (extend_exclus xs hd' (List.rev bodies'))
-;;
-
-let finish_equivs qs = match qs with
-	| None -> []
-	| Some (hd,bodies,xs) ->
-		let xs, r = extend_exclus xs hd (List.rev bodies) in
-		List.rev ((List.rev xs)::r)
-;;
-
-let group_rs v (rs:'a rule list) =
-	let qs = List.fold_left (fun qs (ts,goals,_loc) ->
-		let t1,t2 = Version.partition v ts in
-		Some (extend_equivs qs t1 (t2,goals,_loc))
-	) None rs in finish_equivs qs
-;;
-
 let rule_body env (t2,goals,_loc) =
 	let env,f = List.fold_left goal (env,(fun body -> body)) goals in
 	let outs = goal_outs env t2 in
@@ -401,7 +411,7 @@ let rule_excl _loc ids env exclus =
 ;;
 
 (** Visit a predicate to produce a certain version **)
-let pred_version _loc name rs v =
+let pred_version _loc group_rs name rs v =
 	let has_cut = List.exists rule_has_cut rs in
 	let rs = group_rs v rs in
 	let env,ids = arg_ids (Env.empty Names.pred_var) v in
@@ -415,7 +425,7 @@ let pred_version _loc name rs v =
 let string_of_pred (name,n) = name ^ "/" ^ (string_of_int n) ;;
 
 (** Visit a predicate to produce all possible versions **)
-let pred _loc ((name,n) as p) rs ms =
+let pred _loc group_rs ((name,n) as p) rs ms =
 	if rs = [] then
 		Loc.raise (let (_,_loc) = List.hd ms in _loc) (Failure
 			("Mask without definition for predicate " ^ (string_of_pred p)))
@@ -425,7 +435,7 @@ let pred _loc ((name,n) as p) rs ms =
 	else Version.make (fun a v ->
 	if ms = [] || List.exists (version_matches_mask v) ms then
 		let fname = Names.pred name v in
-		try (pred_version _loc fname rs v)::a with
+		try (pred_version _loc group_rs fname rs v)::a with
 		| UnboundVar(var,_loc) ->
 			warning _loc (Printf.sprintf "skipping %s, unbound %s" fname var);
 			a
@@ -450,9 +460,9 @@ let prog_statics _loc (prog : 'a prog) =
 	cut_id_decl _loc]
 ;;
 
-let prog_rules _loc (prog : 'a prog) =
+let prog_rules _loc group_rs (prog : 'a prog) =
 	let defs = PredMap.fold (fun p (rs,ms) acc ->
-		List.append (pred _loc p (List.rev rs) (List.rev ms)) acc
+		List.append (pred _loc group_rs p (List.rev rs) (List.rev ms)) acc
 	) prog [] in
 	[ <:str_item< value rec $list:defs$ >> ]
 ;;
