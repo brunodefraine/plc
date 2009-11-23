@@ -47,7 +47,7 @@ rule_or_mask:
 
 rule:
 	[ [ x = LIDENT; t = OPT args; b = OPT body;  "." ->
-		let t = list_of_list_option t and b = list_of_list_option b in
+		let t = list_of_list_option t and b = list_of_list_option b
 		in ((x,List.length t),t,b,_loc)
 	] ];
 

@@ -94,7 +94,7 @@ fe.cmx: parser.cmx translate.cmx ast.cmx
 	$(OCAMLOPT) -c $(OCAMLFLAGS) $<
 
 plc.opt: ast.cmx version.cmx names.cmx env.cmx mlgen.cmx translate.cmx parser.cmx fe.cmx
-	$(OCAMLOPT) $(OCAMLFLAGS) -o $@ -I +camlp4 camlp4lib.cmxa $+ unix.cmxa Camlp4Printers/Camlp4$(P4AUTO).cmx Camlp4Bin.cmx
+	$(OCAMLOPT) $(OCAMLFLAGS) -o $@ -I +camlp4 dynlink.cmxa camlp4lib.cmxa $+ unix.cmxa Camlp4Printers/Camlp4$(P4AUTO).cmx Camlp4Bin.cmx
 	strip $@
 
 %.output: %.pl plc.opt
