@@ -2,13 +2,30 @@ open Ast ;;
 open Mlgen ;;
 open Camlp4.PreCast ;;
 
-(** General aux functions **)
+(** {6 Auxiliary functions} *)
 
 let rec fold_range f accu l u =
 	if l < u then let u = u - 1 in fold_range f (f accu u) l u else accu
 ;;
 
-(** Open/closed versions and argument masks **)
+(** The following functions are Ast or Names specific. *)
+
+let rec bound env = function
+	| Integer (_,_) -> true
+	| Var (v,_loc) -> Env.bound env v
+	| Comp (_,ts,_) -> List.for_all (bound env) ts
+	| Anon _loc -> false
+;;
+
+let int_expr _loc i =
+	<:expr< $uid:Names.int_cons$ $int:(string_of_int i)$ >>
+;;
+
+let int_patt _loc i =
+	<:patt< $uid:Names.int_cons$ $int:(string_of_int i)$ >>
+;;
+
+(** {6 Matching versions against argument masks} *)
 
 let arg_decl_allows a o = match a with
 	| ArgOpen _ -> o
@@ -16,7 +33,8 @@ let arg_decl_allows a o = match a with
 	| ArgAny _ -> true
 ;;
 
-let version_matches_mask v (m,_) =
+(** [version_matches_mask v m] is true if version [v] is allowed by mask [m]. *)
+let version_matches_mask v ((m,_): 'a mask) =
 	let (m,s) = Version.fold (fun (m,s) o ->
 		match m with
 		| a::m -> m, s && arg_decl_allows a o
@@ -25,17 +43,14 @@ let version_matches_mask v (m,_) =
 	assert (m = []); s
 ;;
 
-(** Atom/statics translation **)
+(** {6 Statics translation} *)
 
 let comps_contains comps n i =
 	try StringMap.find n comps = i
 	with Not_found -> false
 ;;
 
-let excep_decl _loc n =
-	<:str_item< exception $uid:n$ >>
-;;
-
+(** Generate "plval" type declaration with Prolog compounds (and integers). *)
 let value_type _loc comps =
 	let ts = StringMap.fold (fun comp n l ->
 		let args = fold_range (fun acc _ -> <:ctyp< $lid:Names.val_type$ >>::acc) [] 1 (n+1) in
@@ -44,6 +59,7 @@ let value_type _loc comps =
 	<:str_item< type $lid:Names.val_type$ = [ $list:ts$ ] >>
 ;;
 
+(** Generate "list_of_plval" function declaration. *)
 let list_repr _loc comps =
 	let cases = [ <:match_case< _ -> raise $uid:Names.notalist_exc$ >> ] in
 	let cases = if not (comps_contains comps Names.nil 0) then cases else
@@ -54,6 +70,7 @@ let list_repr _loc comps =
 	<:str_item< value rec $lid:Names.list_of$ = fun [ $list:cases$ ] >>
 ;;
 
+(** Generate "int_of_plval" function declaration. *)
 let int_repr _loc comps =	
 	let cases = [ <:match_case< _ -> raise $uid:Names.notanint_exc$ >> ] in
 	let cases = if not (comps_contains comps Names.neg 1) then cases else
@@ -69,6 +86,7 @@ let int_repr _loc comps =
 	<:str_item< value rec $lid:Names.int_of$ = fun [ $list:cases$ ] >>
 ;;
 
+(** Generate "string_of_plval" function declaration. *)
 let value_repr _loc comps =
 	let cases = StringMap.fold (fun comp n l ->
 		let args = fold_range (fun acc i -> (Names.pred_var i)::acc) [] 1 (n+1) in
@@ -87,14 +105,17 @@ let value_repr _loc comps =
 	with [ $uid:Names.notalist_exc$ -> match v with [ $list:cases$ ] ] >>
 ;;
 
+(** Generate "Cut" exception. *)
 let cut_excep_decl _loc = 
 	<:str_item< exception $uid:Names.cut_exc$ of int >>
 ;;
 
+(** Generate "_cutid" variable. *)
 let cut_id_decl _loc =
 	<:str_item< value $lid:Names.cut_id$ = ref 0 >>
 ;;
 
+(** Wrap body with cut bookkeeping. *)
 let cut_rule_body _loc body = <:expr<
 	let $lid:Names.my_cut_id$ = do { incr $lid:Names.cut_id$; ! $lid:Names.cut_id$ } in
 	try do { $body$; decr $lid:Names.cut_id$ } with
@@ -102,27 +123,9 @@ let cut_rule_body _loc body = <:expr<
 	| e -> do { decr $lid:Names.cut_id$; raise e } ]
 >> ;;
 
-(** Env **)
+(** {6 Rule grouping} **)
 
-let rec bound env = function
-	| Integer (_,_) -> true
-	| Var (v,_loc) -> Env.bound env v
-	| Comp (_,ts,_) -> List.for_all (bound env) ts
-	| Anon _loc -> false
-;;
-
-(** Aux **)
-
-let int_expr _loc i =
-	<:expr< $uid:Names.int_cons$ $int:(string_of_int i)$ >>
-;;
-
-let int_patt _loc i =
-	<:patt< $uid:Names.int_cons$ $int:(string_of_int i)$ >>
-;;
-
-(** Rule grouping **)
-
+(** Check whether two Prolog terms are equivalent. *)
 let rec equiv_t = function
 	| Integer (i,_), Integer (i',_) -> i = i'
 	| Comp (cn,ts,_), Comp (cn',ts',_) ->
@@ -133,6 +136,7 @@ let rec equiv_t = function
 and equiv_ts ts ts' = List.for_all equiv_t (List.combine ts ts')
 ;;
 
+(** Check whether two Prolog terms are exclusive. *)
 let rec exclu_t = function
 	| Integer (i,_), Integer (i',_) -> i <> i'
 	| Comp (cn,ts,_), Comp (cn',ts',_) ->
@@ -178,8 +182,7 @@ let nogroup_rs v (rs:'a rule list) =
 	) rs
 ;;
 
-(** Translation aux **)
-
+(** Generate [env] identifiers for the closed arguments in version [v]. *)
 let arg_ids env v =
 	let env, ids = Version.fold (fun (env,ids) o ->
 		if o then env, ids
@@ -252,6 +255,8 @@ let rec unify _loc (env,tep,tst,a) = function
 			try env, (goal_out_comp env cn ts _locc, lid_patt _locv id)::tep, tst, a
 			with UnboundVar _ -> raise (OpenUnify _loc))
 ;;
+
+(** {6 Main rules translation} *)
 
 (**
 	Rules translation:
@@ -445,8 +450,9 @@ let pred _loc group_rs ((name,n) as p) rs ms =
 	else a) [] n)
 ;;
 
-(** Starters **)
+(** {6 Main entry points} **)
 
+(** Generate the static declarations. *)
 let prog_statics _loc (prog : 'a prog) =
 	let statics = statics prog in
 	[value_type _loc statics;
@@ -460,6 +466,7 @@ let prog_statics _loc (prog : 'a prog) =
 	cut_id_decl _loc]
 ;;
 
+(** Generate the functions that encode the Prolog rules. *)
 let prog_rules _loc group_rs (prog : 'a prog) =
 	let defs = PredMap.fold (fun p (rs,ms) acc ->
 		List.append (pred _loc group_rs p (List.rev rs) (List.rev ms)) acc

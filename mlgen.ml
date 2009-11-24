@@ -161,6 +161,10 @@ let wrap _loc call ins outs es ps t body =
 	fun_apply _loc call (body::outs)
 ;;
 
+let excep_decl _loc n =
+	<:str_item< exception $uid:n$ >>
+;;
+
 let safe_catch _loc e1 e2 exc =
 	<:expr< try $e1$; fun () -> $e2$ with [ $uid:exc$ -> fun () -> () ] () >> 
 ;;
